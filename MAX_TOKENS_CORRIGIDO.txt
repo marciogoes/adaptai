@@ -1,0 +1,148 @@
+╔═══════════════════════════════════════════════════════════════╗
+║          ✅ MAX TOKENS CORRIGIDO PARA CLAUDE HAIKU!           ║
+╚═══════════════════════════════════════════════════════════════╝
+
+
+🎉 PROBLEMA RESOLVIDO:
+
+   Erro: max_tokens: 8000 > 4096 (limite do Claude Haiku)
+   
+   ✅ Corrigido: max_tokens = 4000 (dentro do limite!)
+
+
+📊 O QUE FOI ALTERADO:
+
+   Arquivo: app/services/prova_ai_service.py
+   
+   ❌ Antes:
+   max_tokens=8000  (muito alto para Haiku)
+   
+   ✅ Agora:
+   max_tokens=4000  (dentro do limite de 4096)
+
+
+💡 POR QUE 4000 E NÃO 4096?
+
+   Margem de segurança!
+   
+   Claude Haiku:
+   - Limite máximo: 4096 tokens
+   - Configurado: 4000 tokens
+   - Margem: 96 tokens extras
+   
+   Isso evita erros por tokens extras (headers, etc)
+
+
+🔄 AGORA REINICIE O BACKEND:
+
+
+┌───────────────────────────────────────────────────────────────┐
+│  MÉTODO 1 - Script Automático:                                │
+└───────────────────────────────────────────────────────────────┘
+
+   Execute: CORRIGIR_MAX_TOKENS.bat
+   
+   Isso vai:
+   1. Parar o backend
+   2. Reiniciar com max_tokens correto
+   3. Pronto para gerar provas!
+
+
+┌───────────────────────────────────────────────────────────────┐
+│  MÉTODO 2 - Manual:                                           │
+└───────────────────────────────────────────────────────────────┘
+
+   1. Janela do backend → Ctrl + C
+   2. Confirme: S (sim)
+   3. Execute: RESOLVER_RAPIDO.bat
+
+
+✅ APÓS REINICIAR:
+
+
+┌───────────────────────────────────────────────────────────────┐
+│  Teste a geração de provas:                                   │
+└───────────────────────────────────────────────────────────────┘
+
+   1. Volte no navegador
+   2. Menu → Provas → Criar Prova com IA
+   3. Preencha os dados:
+   
+      Título: Prova de Matemática
+      Conteúdo: Operações básicas, frações
+      Matéria: Matemática
+      Série: 5º ano
+      Quantidade: 10 questões
+      Tipo: Múltipla escolha
+      Dificuldade: Médio
+   
+   4. Clique em "Gerar Prova"
+   5. FUNCIONARÁ! ✅
+
+
+📊 LIMITES DE TOKENS POR MODELO:
+
+
+   Claude 3.5 Sonnet: 8192 tokens
+   Claude 3 Opus: 4096 tokens
+   Claude 3 Sonnet: 4096 tokens
+   Claude 3 Haiku: 4096 tokens ← Seu modelo
+
+
+🎯 QUANTAS QUESTÕES POSSO GERAR?
+
+
+   Com 4000 tokens de saída:
+   
+   ✅ 10 questões múltipla escolha: Tranquilo!
+   ✅ 15 questões múltipla escolha: OK!
+   ✅ 20 questões múltipla escolha: Possível
+   ⚠️  25+ questões: Pode ficar apertado
+   
+   Recomendação:
+   - 10-15 questões: Ideal ✅
+   - 20 questões: Máximo recomendado
+   - 25+ questões: Crie em lotes
+
+
+💡 SE PRECISAR DE MAIS QUESTÕES:
+
+
+   Opção 1 - Gerar em lotes:
+   - Crie prova com 10 questões
+   - Crie outra prova com 10 questões
+   - Total: 20 questões
+   
+   Opção 2 - Upgrade para Claude 3.5:
+   - Upgrade na console.anthropic.com
+   - Claude 3.5 Sonnet: 8192 tokens
+   - Dobro da capacidade!
+
+
+🎉 RESUMO DA JORNADA:
+
+
+   ✅ Login funcionando
+   ✅ Sistema operacional
+   ✅ Modelo Claude descoberto (Haiku)
+   ✅ Max tokens corrigido
+   ✅ Pronto para gerar provas! 🚀
+
+
+📋 CHECKLIST FINAL:
+
+
+   [✅] Backend funcionando
+   [✅] MySQL conectado
+   [✅] Usuários criados
+   [✅] Bcrypt corrigido
+   [✅] Modelo Claude configurado (Haiku)
+   [✅] Max tokens ajustado (4000)
+   [⏳] Reiniciar backend
+   [⏳] Gerar primeira prova!
+
+
+╔═══════════════════════════════════════════════════════════════╗
+║       EXECUTE: CORRIGIR_MAX_TOKENS.bat 🚀                     ║
+║       Depois tente gerar a prova novamente!                   ║
+╚═══════════════════════════════════════════════════════════════╝

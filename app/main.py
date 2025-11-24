@@ -141,21 +141,21 @@ def info():
 @app.on_event("startup")
 async def startup_event():
     """
-    Executado ao iniciar a aplicação
+    Executado ao iniciar a aplicacao
     """
     print("="*60)
-    print("🎓 AdaptAI Backend Starting...")
-    print(f"📌 Version: {settings.VERSION}")
-    print(f"🐍 Python: 3.14")
-    print(f"🗄️  Database: MySQL 8.0 DBaaS")
-    print(f"🤖 AI Model: {settings.CLAUDE_MODEL}")
-    print(f"✨ Novo: Sistema de Provas com IA ativado!")
+    print("[ADAPTAI] Backend Starting...")
+    print(f"[VERSION] {settings.VERSION}")
+    print(f"[PYTHON] 3.12")
+    print(f"[DATABASE] MySQL 8.0 DBaaS")
+    print(f"[AI MODEL] {settings.CLAUDE_MODEL}")
+    print(f"[FEATURE] Sistema de Provas com IA ativado!")
     print("="*60)
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """
-    Executado ao desligar a aplicação
+    Executado ao desligar a aplicacao
     """
-    print("\n🛑 AdaptAI Backend Shutting down...")
-    print("👋 Goodbye!\n")
+    print("\n[ADAPTAI] Backend Shutting down...")
+    print("Goodbye!\n")

@@ -3,11 +3,11 @@
 Endpoints para gerenciamento de provas com IA
 """
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List
 from datetime import datetime
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models.user import User
 from app.models.student import Student
 from app.models.prova import (
@@ -36,7 +36,7 @@ from app.schemas.prova import (
     QuestaoParaAluno
 )
 from app.services.prova_ai_service import prova_ai_service
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, oauth2_scheme, get_user_from_token
 
 router = APIRouter(prefix="/provas")
 
@@ -46,81 +46,97 @@ router = APIRouter(prefix="/provas")
 @router.post("/gerar", response_model=ProvaResponse, status_code=status.HTTP_201_CREATED)
 async def gerar_prova_com_ia(
     request: GerarProvaRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    token: str = Depends(oauth2_scheme)
 ):
     """
-    🤖 Gerar prova automaticamente com IA
+    Gerar prova automaticamente com IA
     
     **Fluxo:**
-    1. Admin define o tema/conteúdo e configurações
-    2. IA (Claude) gera automaticamente as questões
-    3. Prova é salva no banco de dados
+    1. Admin define o tema/conteudo e configuracoes
+    2. IA (Claude) gera automaticamente as questoes
+    3. Prova e salva no banco de dados
     
-    **Requer:** Autenticação de admin/professor
+    **Requer:** Autenticacao de admin/professor
     """
     
+    # Valida usuario e fecha conexao ANTES de chamar IA
+    current_user = get_user_from_token(token)
+    user_id = current_user.id
+    
     try:
-        # Gera questões com IA
-        print(f"📝 Gerando {request.quantidade_questoes} questões com IA...")
+        # PASSO 1: Gera questoes com IA (SEM conexao com banco)
+        print(f"[GERANDO] {request.quantidade_questoes} questoes com IA...")
         questoes_geradas = await prova_ai_service.gerar_questoes(
             conteudo_prompt=request.conteudo_prompt,
             materia=request.materia,
-            serie_nivel=request.serie_nivel or "Não especificado",
+            serie_nivel=request.serie_nivel or "Nao especificado",
             quantidade=request.quantidade_questoes,
             tipo_questao=request.tipo_questao,
             dificuldade=request.dificuldade
         )
+        print(f"[OK] IA gerou {len(questoes_geradas)} questoes")
         
-        # Cria a prova
-        nova_prova = Prova(
-            titulo=request.titulo,
-            descricao=request.descricao,
-            conteudo_prompt=request.conteudo_prompt,
-            materia=request.materia,
-            serie_nivel=request.serie_nivel,
-            quantidade_questoes=request.quantidade_questoes,
-            tipo_questao=request.tipo_questao,
-            dificuldade=request.dificuldade,
-            tempo_limite_minutos=request.tempo_limite_minutos,
-            pontuacao_total=request.pontuacao_total,
-            nota_minima_aprovacao=request.nota_minima_aprovacao,
-            status=StatusProva.ATIVA,
-            criado_por_id=current_user.id
-        )
-        
-        db.add(nova_prova)
-        db.flush()  # Get prova.id
-        
-        # Adiciona as questões geradas
-        pontos_por_questao = request.pontuacao_total / request.quantidade_questoes
-        
-        for questao_data in questoes_geradas:
-            questao = QuestaoGerada(
-                prova_id=nova_prova.id,
-                numero=questao_data.get("numero"),
-                enunciado=questao_data.get("enunciado"),
-                tipo=request.tipo_questao,
-                dificuldade=questao_data.get("dificuldade", request.dificuldade),
-                opcoes=questao_data.get("opcoes"),
-                resposta_correta=questao_data.get("resposta_correta"),
-                criterios_avaliacao=questao_data.get("criterios_avaliacao"),
-                pontuacao=pontos_por_questao,
-                explicacao=questao_data.get("explicacao"),
-                tags=questao_data.get("tags", [])
+        # PASSO 2: Abre NOVA conexao e salva tudo (conexao fresca)
+        db = SessionLocal()
+        try:
+            # Cria a prova
+            nova_prova = Prova(
+                titulo=request.titulo,
+                descricao=request.descricao,
+                conteudo_prompt=request.conteudo_prompt,
+                materia=request.materia,
+                serie_nivel=request.serie_nivel,
+                quantidade_questoes=request.quantidade_questoes,
+                tipo_questao=request.tipo_questao,
+                dificuldade=request.dificuldade,
+                tempo_limite_minutos=request.tempo_limite_minutos,
+                pontuacao_total=request.pontuacao_total,
+                nota_minima_aprovacao=request.nota_minima_aprovacao,
+                status=StatusProva.ATIVA,
+                criado_por_id=user_id
             )
-            db.add(questao)
-        
-        db.commit()
-        db.refresh(nova_prova)
-        
-        print(f"✅ Prova '{nova_prova.titulo}' criada com sucesso! (ID: {nova_prova.id})")
-        
-        return nova_prova
+            
+            db.add(nova_prova)
+            db.flush()  # Get prova.id
+            
+            # Adiciona as questoes geradas
+            pontos_por_questao = request.pontuacao_total / request.quantidade_questoes
+            
+            for questao_data in questoes_geradas:
+                questao = QuestaoGerada(
+                    prova_id=nova_prova.id,
+                    numero=questao_data.get("numero"),
+                    enunciado=questao_data.get("enunciado"),
+                    tipo=request.tipo_questao,
+                    dificuldade=questao_data.get("dificuldade", request.dificuldade),
+                    opcoes=questao_data.get("opcoes"),
+                    resposta_correta=questao_data.get("resposta_correta"),
+                    criterios_avaliacao=questao_data.get("criterios_avaliacao"),
+                    pontuacao=pontos_por_questao,
+                    explicacao=questao_data.get("explicacao"),
+                    tags=questao_data.get("tags", [])
+                )
+                db.add(questao)
+            
+            db.commit()
+            
+            # Busca a prova com questoes carregadas (eager loading)
+            prova_completa = db.query(Prova).options(
+                joinedload(Prova.questoes)
+            ).filter(Prova.id == nova_prova.id).first()
+            
+            print(f"[OK] Prova '{prova_completa.titulo}' criada com sucesso! (ID: {prova_completa.id})")
+            
+            return prova_completa
+            
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            db.close()
         
     except Exception as e:
-        db.rollback()
-        print(f"❌ Erro ao gerar prova: {e}")
+        print(f"[ERRO] Erro ao gerar prova: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erro ao gerar prova: {str(e)}"
@@ -260,7 +276,7 @@ def associar_prova_ao_aluno(
     db.commit()
     db.refresh(prova_aluno)
     
-    print(f"✅ Prova '{prova.titulo}' associada ao aluno '{aluno.name}'")
+    print(f"[OK] Prova '{prova.titulo}' associada ao aluno '{aluno.name}'")
     
     return prova_aluno
 
@@ -491,7 +507,7 @@ async def finalizar_prova(
         db.commit()
         
     except Exception as e:
-        print(f"⚠️ Erro ao gerar análise IA: {e}")
+        print(f"[AVISO] Erro ao gerar analise IA: {e}")
         analise = {}
         feedback = "Prova corrigida com sucesso!"
     

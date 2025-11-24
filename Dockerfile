@@ -1,8 +1,8 @@
-FROM python:3.14-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Instalar dependências do sistema
+# Instalar dependencias do sistema
 RUN apt-get update && apt-get install -y \
     gcc \
     default-libmysqlclient-dev \
@@ -12,17 +12,15 @@ RUN apt-get update && apt-get install -y \
 # Copiar requirements
 COPY requirements.txt .
 
-# Instalar dependências Python
+# Instalar dependencias Python
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copiar código da aplicação
+# Copiar codigo da aplicacao
 COPY ./app ./app
-COPY ./alembic ./alembic
-COPY ./alembic.ini .
 
 # Expor porta
 EXPOSE 8000
 
-# Comando para iniciar
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Comando para iniciar (sem --reload em producao)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

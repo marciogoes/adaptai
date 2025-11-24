@@ -19,8 +19,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copiar codigo da aplicacao
 COPY ./app ./app
 
-# Expor porta
+# Expor porta (Railway define PORT automaticamente)
 EXPOSE 8000
 
-# Comando para iniciar (sem --reload em producao)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Usar shell form para interpretar a variavel $PORT
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}

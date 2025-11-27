@@ -38,3 +38,4 @@ class Student(Base):
     answers = relationship("StudentAnswer", back_populates="student")
     performance_analyses = relationship("PerformanceAnalysis", back_populates="student")
     provas = relationship("ProvaAluno", back_populates="aluno")
+    materiais = relationship("MaterialAluno", back_populates="aluno")

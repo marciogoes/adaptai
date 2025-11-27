@@ -1,0 +1,179 @@
+{
+  "titulo": "🧪 Funções Orgânicas com Carbonila",
+  "cor_central": "#6366F1",
+  "nos": [
+    {
+      "id": "no1",
+      "texto": "⚡ Grupo Carbonila",
+      "cor": "#EF4444",
+      "nivel": 1,
+      "filhos": [
+        {
+          "id": "no1_1",
+          "texto": "🔬 Estrutura C=O",
+          "cor": "#FCA5A5",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no1_2",
+          "texto": "🌐 Carbono sp²",
+          "cor": "#FCA5A5",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no1_3",
+          "texto": "⚡ Dupla ligação polar",
+          "cor": "#FCA5A5",
+          "nivel": 2,
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "id": "no2",
+      "texto": "🏭 Aldeídos",
+      "cor": "#10B981",
+      "nivel": 1,
+      "filhos": [
+        {
+          "id": "no2_1",
+          "texto": "📝 Sufixo -al",
+          "cor": "#86EFAC",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no2_2",
+          "texto": "🔗 R-CHO",
+          "cor": "#86EFAC",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no2_3",
+          "texto": "🌿 Formaldeído, acetaldeído",
+          "cor": "#86EFAC",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no2_4",
+          "texto": "🔬 Teste de Tollens",
+          "cor": "#86EFAC",
+          "nivel": 2,
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "id": "no3",
+      "texto": "💎 Cetonas",
+      "cor": "#F59E0B",
+      "nivel": 1,
+      "filhos": [
+        {
+          "id": "no3_1",
+          "texto": "📝 Sufixo -ona",
+          "cor": "#FCD34D",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no3_2",
+          "texto": "🔗 R-CO-R'",
+          "cor": "#FCD34D",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no3_3",
+          "texto": "⚗️ Acetona, butanona",
+          "cor": "#FCD34D",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no3_4",
+          "texto": "🧪 Solventes orgânicos",
+          "cor": "#FCD34D",
+          "nivel": 2,
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "id": "no4",
+      "texto": "🍋 Ácidos Carboxílicos",
+      "cor": "#8B5CF6",
+      "nivel": 1,
+      "filhos": [
+        {
+          "id": "no4_1",
+          "texto": "📝 Sufixo -óico",
+          "cor": "#C4B5FD",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no4_2",
+          "texto": "🔗 R-COOH",
+          "cor": "#C4B5FD",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no4_3",
+          "texto": "⚡ Caráter ácido",
+          "cor": "#C4B5FD",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no4_4",
+          "texto": "🍎 Ácido acético, fórmico",
+          "cor": "#C4B5FD",
+          "nivel": 2,
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "id": "no5",
+      "texto": "🌸 Ésteres",
+      "cor": "#EC4899",
+      "nivel": 1,
+      "filhos": [
+        {
+          "id": "no5_1",
+          "texto": "📝 Sufixo -ato",
+          "cor": "#F9A8D4",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no5_2",
+          "texto": "🔗 R-COO-R'",
+          "cor": "#F9A8D4",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no5_3",
+          "texto": "🍓 Aromas frutais",
+          "cor": "#F9A8D4",
+          "nivel": 2,
+          "filhos": []
+        },
+        {
+          "id": "no5_4",
+          "texto": "🧪 Hidrólise ácida/básica",
+          "cor": "#F9A8D4",
+          "nivel": 2,
+          "filhos": []
+        }
+      ]
+    }
+  ]
+}

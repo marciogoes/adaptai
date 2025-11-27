@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from app.core.config import settings
 from app.database import engine, Base
 
@@ -7,6 +9,10 @@ from app.database import engine, Base
 from app.api.routes import auth, students, questions, applications, analytics
 from app.api.routes import provas  # NOVA ROTA DE PROVAS
 from app.api.routes import student_provas  # ROTAS ESTUDANTES
+from app.api.routes import professor_analytics  # ANALYTICS DE PROVAS PARA PROFESSORES
+from app.api.routes import materiais, student_materiais  # MATERIAIS DE ESTUDO COM IA
+from app.api.routes import analise_qualitativa  # ANÁLISE QUALITATIVA COM IA
+from app.api.routes import prova_adaptativa  # PROVA ADAPTATIVA (REFORÇO)
 
 # Criar tabelas
 Base.metadata.create_all(bind=engine)
@@ -68,6 +74,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Configurar pasta de storage para arquivos estáticos
+storage_path = Path(__file__).parent.parent / "storage" / "materiais"
+storage_path.mkdir(parents=True, exist_ok=True)
+app.mount("/storage/materiais", StaticFiles(directory=str(storage_path)), name="materiais_storage")
+print(f"📁 Storage configurado: {storage_path}")
+
 # Incluir rotas
 app.include_router(auth.router, prefix="/api/v1", tags=["🔐 Authentication"])
 app.include_router(students.router, prefix="/api/v1", tags=["👥 Students"])
@@ -76,6 +88,11 @@ app.include_router(applications.router, prefix="/api/v1", tags=["📋 Applicatio
 app.include_router(analytics.router, prefix="/api/v1", tags=["📊 Analytics"])
 app.include_router(provas.router, prefix="/api/v1", tags=["🎓 Provas (NOVO)"])  # NOVA ROTA!
 app.include_router(student_provas.router, prefix="/api/v1", tags=["🎓 Provas Estudantes"])  # ROTAS ESTUDANTES!
+app.include_router(professor_analytics.router, prefix="/api/v1", tags=["📊 Analytics Provas"])  # ANALYTICS PARA PROFESSORES!
+app.include_router(materiais.router, prefix="/api/v1", tags=["📚 Materiais"])  # MATERIAIS DE ESTUDO COM IA!
+app.include_router(student_materiais.router, prefix="/api/v1", tags=["📚 Student Materiais"])  # ALUNO VER MATERIAIS!
+app.include_router(analise_qualitativa.router, prefix="/api/v1", tags=["🤖 Análise Qualitativa IA"])  # ANÁLISE COM IA!
+app.include_router(prova_adaptativa.router, prefix="/api/v1", tags=["🎯 Prova Adaptativa (Reforço)"])  # PROVA DE REFORÇO!
 
 # Rotas principais
 @app.get("/", tags=["Root"])

@@ -27,3 +27,4 @@ class User(Base):
     question_sets = relationship("QuestionSet", back_populates="creator")
     applications = relationship("Application", back_populates="applied_by")
     provas_criadas = relationship("Prova", back_populates="criado_por")
+    materiais_criados = relationship("Material", back_populates="criado_por")

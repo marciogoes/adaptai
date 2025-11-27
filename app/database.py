@@ -3,18 +3,21 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 
-# Criar engine do MySQL com configurações robustas para produção
+# Criar engine do MySQL com configurações AGRESSIVAS para DBaaS
 engine = create_engine(
-    settings.db_url,  # Usa a propriedade que decide entre DATABASE_URL ou partes
-    pool_pre_ping=True,  # Testa conexão antes de usar
-    pool_size=5,  # Reduzido para economizar recursos em produção
-    max_overflow=10,
-    pool_recycle=1800,  # Reconecta a cada 30 minutos
-    pool_timeout=30,  # Timeout de 30s para pegar conexão
+    settings.db_url,
+    pool_pre_ping=True,  # CRÍTICO: Testa conexão antes de usar
+    pool_size=10,  # AUMENTADO: Mais conexões disponíveis
+    max_overflow=20,  # AUMENTADO: Mais overflow
+    pool_recycle=180,  # REDUZIDO: Reconecta a cada 3 minutos (DBaaS agressivo)
+    pool_timeout=60,  # AUMENTADO: 1 minuto para pegar conexão
     connect_args={
-        "connect_timeout": 60  # Timeout de conexão MySQL
+        "connect_timeout": 180,  # AUMENTADO: Timeout de 3 minutos
+        "read_timeout": 180,     # AUMENTADO: 3 minutos de leitura
+        "write_timeout": 180,    # AUMENTADO: 3 minutos de escrita
+        "charset": "utf8mb4"     # Suporte completo UTF-8
     },
-    echo=settings.DEBUG  # Só mostra SQL se DEBUG=True
+    echo=settings.DEBUG
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

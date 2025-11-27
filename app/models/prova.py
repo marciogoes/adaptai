@@ -150,6 +150,7 @@ class ProvaAluno(Base):
     prova = relationship("Prova", back_populates="provas_alunos")
     aluno = relationship("Student", back_populates="provas")
     respostas = relationship("RespostaAluno", back_populates="prova_aluno", cascade="all, delete-orphan")
+    analise_qualitativa = relationship("AnaliseQualitativa", back_populates="prova_aluno", uselist=False, cascade="all, delete-orphan")
 
 
 class RespostaAluno(Base):

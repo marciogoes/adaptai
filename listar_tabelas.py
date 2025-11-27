@@ -1,59 +1,41 @@
-import sys
-sys.path.append('.')
-
-from sqlalchemy import create_engine, text, inspect
+"""
+Script para listar todas as tabelas do banco de dados
+"""
+from sqlalchemy import create_engine, text
 from app.core.config import settings
 
 def listar_tabelas():
-    print("="*60)
-    print("LISTANDO TABELAS NO BANCO")
-    print("="*60)
-    print()
+    print("\n" + "="*80)
+    print("📊 LISTANDO TABELAS DO BANCO DE DADOS")
+    print("="*80 + "\n")
+    
+    engine = create_engine(settings.db_url)
     
     try:
-        engine = create_engine(settings.DATABASE_URL)
-        inspector = inspect(engine)
-        
-        tables = inspector.get_table_names()
-        
-        if not tables:
-            print("Nenhuma tabela encontrada no banco!")
-        else:
-            print(f"Total de tabelas: {len(tables)}")
-            print()
+        with engine.connect() as conn:
+            print("✅ Conectado ao banco!\n")
             
-            # Separar tabelas corretas e erradas
-            corretas = []
-            erradas = []
+            # Listar todas as tabelas
+            sql = "SHOW TABLES"
+            result = conn.execute(text(sql))
             
-            for table in sorted(tables):
-                if table.startswith('teamarcionovo'):
-                    erradas.append(table)
-                else:
-                    corretas.append(table)
+            tabelas = [row[0] for row in result]
             
-            if erradas:
-                print("❌ TABELAS COM NOMES ERRADOS:")
-                for table in erradas:
-                    print(f"   - {table}")
-                print()
+            print(f"📋 Total de tabelas: {len(tabelas)}\n")
+            print("="*80)
             
-            if corretas:
-                print("✓ TABELAS COM NOMES CORRETOS:")
-                for table in corretas:
-                    print(f"   - {table}")
-                print()
+            for idx, tabela in enumerate(sorted(tabelas), 1):
+                print(f"{idx:2d}. {tabela}")
             
-            if not corretas:
-                print("⚠ PROBLEMA: Nao ha tabelas com nomes corretos!")
-                print("   Execute fix_database.py para corrigir!")
-        
-        print("="*60)
-        
+            print("="*80 + "\n")
+            
     except Exception as e:
-        print(f"[ERRO] {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"\n❌ Erro: {e}\n")
+    
+    finally:
+        engine.dispose()
+
 
 if __name__ == "__main__":
     listar_tabelas()
+    input("\nPressione ENTER para sair...")

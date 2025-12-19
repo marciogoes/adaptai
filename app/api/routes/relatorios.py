@@ -222,6 +222,78 @@ def parse_date(date_str: str) -> Optional[datetime]:
 
 # ============= CRUD (mantém o mesmo) =============
 
+@router.get("/check-duplicate/{student_id}")
+async def verificar_duplicata(
+    student_id: int,
+    file_hash: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Verifica se já existe um relatório com o mesmo hash para este aluno
+    Retorna informações do relatório existente se houver duplicata
+    """
+    # Buscar relatórios deste aluno
+    relatorios = db.query(Relatorio).filter(
+        Relatorio.student_id == student_id
+    ).all()
+    
+    # Verificar se algum tem o mesmo hash no nome do arquivo
+    for relatorio in relatorios:
+        if hasattr(relatorio, 'arquivo_path') and relatorio.arquivo_path:
+            # Hash está no nome do arquivo: relatorio_1_20251219_213602_HASH.pdf
+            if file_hash in relatorio.arquivo_path:
+                return {
+                    "duplicate": True,
+                    "relatorio_id": relatorio.id,
+                    "arquivo_nome": relatorio.arquivo_nome,
+                    "tipo": relatorio.tipo,
+                    "profissional_nome": relatorio.profissional_nome,
+                    "data_emissao": relatorio.data_emissao.isoformat() if relatorio.data_emissao else None,
+                    "created_at": relatorio.created_at.isoformat() if relatorio.created_at else None
+                }
+    
+    return {"duplicate": False}
+
+
+@router.get("/student/{student_id}/files")
+async def listar_arquivos_aluno(
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Lista todos os arquivos já carregados para um aluno específico
+    Retorna nome do arquivo e resumo
+    """
+    relatorios = db.query(Relatorio).filter(
+        Relatorio.student_id == student_id
+    ).order_by(Relatorio.created_at.desc()).all()
+    
+    arquivos = []
+    for r in relatorios:
+        # Extrair hash do arquivo_path se existir
+        file_hash = None
+        if hasattr(r, 'arquivo_path') and r.arquivo_path:
+            # Formato: relatorio_1_20251219_213602_HASH.pdf
+            parts = r.arquivo_path.split('_')
+            if len(parts) >= 4:
+                hash_part = parts[3].split('.')[0]  # Remove extensão
+                file_hash = hash_part
+        
+        arquivos.append({
+            "id": r.id,
+            "arquivo_nome": r.arquivo_nome,
+            "file_hash": file_hash,
+            "tipo": r.tipo,
+            "profissional_nome": r.profissional_nome,
+            "data_emissao": r.data_emissao.isoformat() if r.data_emissao else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "processando": r.tipo == "Processando..."
+        })
+    
+    return {"total": len(arquivos), "arquivos": arquivos}
+
 @router.get("/")
 async def listar_relatorios(
     student_id: Optional[int] = None,
@@ -435,11 +507,37 @@ async def upload_e_analisar_relatorio(
     if len(file_content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Arquivo muito grande. Máximo: 10MB")
     
-    # Gerar nomes únicos
-    file_hash = hashlib.md5(file_content).hexdigest()[:12]
+    # Calcular hash completo do arquivo para verificar duplicata
+    full_file_hash = hashlib.md5(file_content).hexdigest()
+    
+    # VERIFICAR DUPLICATA - Economizar créditos de IA!
+    relatorios_existentes = db.query(Relatorio).filter(
+        Relatorio.student_id == student_id
+    ).all()
+    
+    for rel in relatorios_existentes:
+        if hasattr(rel, 'arquivo_path') and rel.arquivo_path:
+            # Verificar se o hash completo está no nome do arquivo
+            if full_file_hash in rel.arquivo_path:
+                # DUPLICATA ENCONTRADA!
+                print(f"⚠️ DUPLICATA: Arquivo {arquivo.filename} já existe como relatório {rel.id}")
+                return {
+                    "success": False,
+                    "duplicate": True,
+                    "message": f"⛔ Este arquivo já foi carregado anteriormente em {rel.created_at.strftime('%d/%m/%Y')}",
+                    "relatorio_existente": {
+                        "id": rel.id,
+                        "arquivo_nome": rel.arquivo_nome,
+                        "tipo": rel.tipo,
+                        "profissional_nome": rel.profissional_nome,
+                        "data_upload": rel.created_at.isoformat() if rel.created_at else None
+                    }
+                }
+    
+    # Gerar nomes únicos com hash COMPLETO
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     file_extension = Path(arquivo.filename).suffix
-    base_filename = f"relatorio_{student_id}_{timestamp}_{file_hash}"
+    base_filename = f"relatorio_{student_id}_{timestamp}_{full_file_hash}"
     
     safe_pdf_filename = f"{base_filename}{file_extension}"
     safe_json_filename = f"{base_filename}.json"

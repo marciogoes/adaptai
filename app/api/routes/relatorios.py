@@ -70,9 +70,17 @@ async def listar_relatorios(
     total = query.count()
     relatorios = query.order_by(Relatorio.created_at.desc()).offset(skip).limit(limit).all()
     
-    # Adicionar nome do aluno
+    # Adicionar nome do aluno e carregar JSON de arquivo se necessário
     result = []
     for r in relatorios:
+        # Se dados_extraidos tem apenas referência ao arquivo, carregar
+        dados = r.dados_extraidos
+        if isinstance(dados, dict) and dados.get("json_path"):
+            json_file = RELATORIOS_DIR / dados["json_path"]
+            if json_file.exists():
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    dados = json.load(f)
+        
         rel_dict = {
             "id": r.id,
             "student_id": r.student_id,
@@ -87,7 +95,7 @@ async def listar_relatorios(
             "arquivo_nome": r.arquivo_nome,
             "arquivo_tipo": r.arquivo_tipo,
             "arquivo_path": getattr(r, 'arquivo_path', None),
-            "dados_extraidos": r.dados_extraidos,
+            "dados_extraidos": dados,
             "condicoes": r.condicoes,
             "created_at": r.created_at,
             "updated_at": r.updated_at,
@@ -153,6 +161,14 @@ async def obter_relatorio(
     if not relatorio:
         raise HTTPException(status_code=404, detail="Relatório não encontrado")
     
+    # Carregar dados completos do JSON se necessário
+    if relatorio.dados_extraidos and isinstance(relatorio.dados_extraidos, dict):
+        if relatorio.dados_extraidos.get("json_path"):
+            json_file = RELATORIOS_DIR / relatorio.dados_extraidos["json_path"]
+            if json_file.exists():
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    relatorio.dados_extraidos = json.load(f)
+    
     return relatorio
 
 
@@ -168,11 +184,18 @@ async def excluir_relatorio(
     if not relatorio:
         raise HTTPException(status_code=404, detail="Relatório não encontrado")
     
-    # Excluir arquivo se existir
+    # Excluir PDF se existir
     if hasattr(relatorio, 'arquivo_path') and relatorio.arquivo_path:
         file_path = RELATORIOS_DIR / relatorio.arquivo_path
         if file_path.exists():
             file_path.unlink()
+    
+    # Excluir JSON se existir
+    if relatorio.dados_extraidos and isinstance(relatorio.dados_extraidos, dict):
+        if relatorio.dados_extraidos.get("json_path"):
+            json_file = RELATORIOS_DIR / relatorio.dados_extraidos["json_path"]
+            if json_file.exists():
+                json_file.unlink()
     
     db.delete(relatorio)
     db.commit()
@@ -243,23 +266,26 @@ async def upload_e_analisar_relatorio(
     if len(file_content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Arquivo muito grande. Máximo: 10MB")
     
-    # Gerar nome único para o arquivo
+    # Gerar nome único para os arquivos
     file_hash = hashlib.md5(file_content).hexdigest()[:12]
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     file_extension = Path(arquivo.filename).suffix
-    safe_filename = f"relatorio_{student_id}_{timestamp}_{file_hash}{file_extension}"
+    base_filename = f"relatorio_{student_id}_{timestamp}_{file_hash}"
     
-    # Salvar arquivo no storage
-    file_path = RELATORIOS_DIR / safe_filename
-    with open(file_path, "wb") as f:
+    safe_pdf_filename = f"{base_filename}{file_extension}"
+    safe_json_filename = f"{base_filename}.json"
+    
+    # Salvar PDF no storage
+    pdf_path = RELATORIOS_DIR / safe_pdf_filename
+    with open(pdf_path, "wb") as f:
         f.write(file_content)
     
-    print(f"📁 Relatório salvo em: {file_path}")
+    print(f"📁 PDF salvo em: {pdf_path}")
     
     # Converter para base64 para análise da IA
     file_base64 = base64.standard_b64encode(file_content).decode("utf-8")
     
-    # Prompt para análise
+    # Prompt para análise (mantém o mesmo)
     prompt = """Analise este relatório de terapia, acompanhamento ou avaliação profissional e extraia as informações em formato JSON.
 
 Este documento pode ser um relatório de:
@@ -280,59 +306,20 @@ IMPORTANTE: Retorne APENAS o JSON, sem explicações ou texto adicional.
 
 Estrutura esperada:
 {
-    "tipo_laudo": "string (ex: Relatório Psicopedagógico, Relatório de Terapia Ocupacional, etc)",
-    "profissional": {
-        "nome": "string (nome completo do profissional)",
-        "registro": "string (CRM, CRP, CRFa, CREFITO, etc)",
-        "especialidade": "string (especialidade ou área de atuação)"
-    },
-    "paciente": {
-        "nome": "string (se disponível)",
-        "data_nascimento": "string formato YYYY-MM-DD (se disponível)",
-        "idade": "string (se disponível)"
-    },
-    "datas": {
-        "emissao": "string formato YYYY-MM-DD",
-        "validade": "string formato YYYY-MM-DD (se mencionada)"
-    },
-    "diagnosticos": [
-        {
-            "cid": "string (código CID-10 ou CID-11, se disponível)",
-            "descricao": "string (nome do diagnóstico)"
-        }
-    ],
-    "condicoes_identificadas": {
-        "tea": false,
-        "tea_nivel": null,
-        "tdah": false,
-        "dislexia": false,
-        "discalculia": false,
-        "disgrafia": false,
-        "deficiencia_visual": false,
-        "deficiencia_auditiva": false,
-        "deficiencia_intelectual": false,
-        "deficiencia_fisica": false,
-        "superdotacao": false,
-        "atraso_desenvolvimento": false,
-        "transtorno_linguagem": false,
-        "outras": []
-    },
-    "resumo_clinico": "string (resumo das principais conclusões)",
+    "tipo_laudo": "string",
+    "profissional": {"nome": "string", "registro": "string", "especialidade": "string"},
+    "paciente": {"nome": "string", "data_nascimento": "string", "idade": "string"},
+    "datas": {"emissao": "string", "validade": "string"},
+    "diagnosticos": [{"cid": "string", "descricao": "string"}],
+    "condicoes_identificadas": {"tea": false, "tdah": false, ...},
+    "resumo_clinico": "string",
     "recomendacoes": ["string"],
-    "adaptacoes_sugeridas": {
-        "curriculares": "string",
-        "avaliacao": "string",
-        "ambiente": "string",
-        "recursos": "string"
-    },
-    "acompanhamentos_indicados": [
-        {"profissional": "string", "frequencia": "string"}
-    ],
+    "adaptacoes_sugeridas": {"curriculares": "", "avaliacao": "", "ambiente": "", "recursos": ""},
+    "acompanhamentos_indicados": [{"profissional": "", "frequencia": ""}],
     "observacoes": "string"
 }
 
-Se algum campo não estiver disponível, use null ou [].
-Analise o documento e extraia todas as informações relevantes."""
+Se algum campo não estiver disponível, use null ou []."""
 
     try:
         # Determinar media type
@@ -393,7 +380,14 @@ Analise o documento e extraia todas as informações relevantes."""
                 "mensagem": "Não foi possível estruturar os dados automaticamente"
             }
         
-        # Criar relatório no banco - SEM arquivo_base64!
+        # Salvar JSON completo em arquivo separado
+        json_path = RELATORIOS_DIR / safe_json_filename
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(dados_extraidos, f, ensure_ascii=False, indent=2)
+        
+        print(f"📄 JSON salvo em: {json_path}")
+        
+        # Criar relatório no banco - APENAS referência ao JSON!
         novo_relatorio = Relatorio(
             student_id=student_id,
             tipo=dados_extraidos.get("tipo_laudo", "Relatório de Acompanhamento"),
@@ -403,18 +397,18 @@ Analise o documento e extraia todas as informações relevantes."""
             data_emissao=parse_date(dados_extraidos.get("datas", {}).get("emissao")),
             data_validade=parse_date(dados_extraidos.get("datas", {}).get("validade")),
             cid=", ".join([d.get("cid", "") for d in dados_extraidos.get("diagnosticos", []) if d.get("cid")]),
-            resumo=dados_extraidos.get("resumo_clinico"),
+            resumo=dados_extraidos.get("resumo_clinico", "")[:500],  # Máximo 500 chars
             arquivo_nome=arquivo.filename,
             arquivo_tipo=content_type,
-            arquivo_base64=None,  # NÃO SALVAR - Causa erro MySQL!
-            dados_extraidos=dados_extraidos,
+            arquivo_base64=None,  # NÃO SALVAR
+            dados_extraidos={"json_path": safe_json_filename},  # SÓ REFERÊNCIA!
             condicoes=dados_extraidos.get("condicoes_identificadas"),
             created_by=current_user.id
         )
         
-        # Adicionar arquivo_path se a coluna existir
+        # Adicionar arquivo_path
         if hasattr(Relatorio, 'arquivo_path'):
-            setattr(novo_relatorio, 'arquivo_path', safe_filename)
+            setattr(novo_relatorio, 'arquivo_path', safe_pdf_filename)
         
         db.add(novo_relatorio)
         db.commit()
@@ -425,15 +419,18 @@ Analise o documento e extraia todas as informações relevantes."""
         return {
             "success": True,
             "relatorio_id": novo_relatorio.id,
-            "arquivo_path": safe_filename,
+            "arquivo_path": safe_pdf_filename,
+            "json_path": safe_json_filename,
             "dados": dados_extraidos,
             "message": "Relatório analisado e salvo com sucesso"
         }
         
     except Exception as e:
-        # Em caso de erro, excluir arquivo salvo
-        if file_path.exists():
-            file_path.unlink()
+        # Em caso de erro, excluir arquivos salvos
+        if pdf_path.exists():
+            pdf_path.unlink()
+        if json_path.exists():
+            json_path.unlink()
         
         print(f"[ERRO] Falha ao analisar relatório: {str(e)}")
         raise HTTPException(

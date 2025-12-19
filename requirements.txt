@@ -1,0 +1,28 @@
+# FastAPI e servidor
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Banco de dados
+sqlalchemy==2.0.23
+pymysql==1.1.0
+cryptography==41.0.7
+
+# Validacao e configuracao
+pydantic==2.5.0
+pydantic-settings==2.1.0
+email-validator==2.1.1
+
+# Autenticacao
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
+
+# Upload de arquivos
+python-multipart==0.0.6
+
+# IA - Anthropic Claude (versao compativel)
+anthropic>=0.39.0
+httpx>=0.27.0
+
+# Producao
+gunicorn==21.2.0

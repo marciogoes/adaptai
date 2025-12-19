@@ -1,0 +1,75 @@
+# ✅ SOLUÇÃO RÁPIDA!
+
+## O servidor está quase funcionando!
+
+Falta apenas 1 biblioteca: **email-validator**
+
+---
+
+## 🚀 OPÇÃO 1: Script Automático (Mais Fácil)
+
+Execute:
+```
+INSTALAR_EMAIL_VALIDATOR.bat
+```
+
+Este script vai:
+1. Ativar venv
+2. Instalar email-validator
+3. Iniciar servidor
+4. Pronto!
+
+---
+
+## 🚀 OPÇÃO 2: Comando Manual (Rápido)
+
+Se você já tem o terminal aberto com erro:
+
+1. **NÃO FECHE** o terminal
+2. Pressione **CTRL+C** para parar o servidor
+3. Execute este comando:
+```
+pip install email-validator
+```
+4. Depois execute:
+```
+uvicorn app.main:app --reload
+```
+
+---
+
+## 🚀 OPÇÃO 3: Em 2 Comandos
+
+Abra CMD na pasta backend e execute:
+
+```bash
+venv\Scripts\activate
+pip install email-validator
+uvicorn app.main:app --reload
+```
+
+---
+
+## ✅ RESULTADO ESPERADO:
+
+Depois de instalar, você verá:
+
+```
+INFO: Uvicorn running on http://127.0.0.1:8000
+INFO: Application startup complete.
+```
+
+Sem erros! 🎉
+
+---
+
+## 📝 NOTA:
+
+Já atualizei o script **INSTALAR.bat** para incluir
+o email-validator automaticamente da próxima vez!
+
+---
+
+**Execute agora:** `INSTALAR_EMAIL_VALIDATOR.bat`
+
+Está a 1 comando de funcionar! 🚀

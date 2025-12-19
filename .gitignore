@@ -1,0 +1,62 @@
+# Ambiente virtual
+venv/
+env/
+.venv/
+
+# Variáveis de ambiente (NUNCA SUBIR!)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Testes
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Banco de dados local
+*.db
+*.sqlite3
+
+# Scripts de desenvolvimento (não necessários em produção)
+*.bat
+CORRIGIR_*.py
+ADICIONAR_*.py
+EXCLUIR_*.py
+TESTAR_*.py
+VERIFICAR_*.py
+CRIAR_*.py
+RECRIAR_*.py

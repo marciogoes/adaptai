@@ -323,30 +323,47 @@ async def obter_relatorio(
         raise HTTPException(status_code=404, detail="Relatório não encontrado")
     
     # Carregar JSON se existir
-    if relatorio.dados_extraidos and isinstance(relatorio.dados_extraidos, dict):
-        if relatorio.dados_extraidos.get("json_path"):
-            json_file = RELATORIOS_DIR / relatorio.dados_extraidos["json_path"]
-            if json_file.exists():
-                with open(json_file, 'r', encoding='utf-8') as f:
-                    dados = json.load(f)
-                    return {
-                        "id": relatorio.id,
-                        "student_id": relatorio.student_id,
-                        "tipo": relatorio.tipo,
-                        "dados_extraidos": dados,
-                        "condicoes": dados.get("condicoes_identificadas"),
-                        "processando": False
-                    }
-            else:
-                # JSON ainda não existe - processando
-                return {
-                    "id": relatorio.id,
-                    "tipo": relatorio.tipo,
-                    "processando": True,
-                    "message": "Relatório sendo processado pela IA..."
-                }
+    dados_extraidos = relatorio.dados_extraidos
+    condicoes = relatorio.condicoes
+    processando = False
     
-    return relatorio
+    if isinstance(dados_extraidos, dict) and dados_extraidos.get("json_path"):
+        json_file = RELATORIOS_DIR / dados_extraidos["json_path"]
+        if json_file.exists():
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    full_data = json.load(f)
+                    dados_extraidos = full_data
+                    condicoes = full_data.get("condicoes_identificadas", {})
+            except:
+                pass
+        else:
+            processando = True
+    
+    # Retornar todos os campos necessários
+    return {
+        "id": relatorio.id,
+        "student_id": relatorio.student_id,
+        "student_name": relatorio.student.name if relatorio.student else None,
+        "tipo": relatorio.tipo,
+        "profissional_nome": relatorio.profissional_nome,
+        "profissional_registro": relatorio.profissional_registro,
+        "profissional_especialidade": relatorio.profissional_especialidade,
+        "data_emissao": relatorio.data_emissao.isoformat() if relatorio.data_emissao else None,
+        "data_validade": relatorio.data_validade.isoformat() if relatorio.data_validade else None,
+        "cid": relatorio.cid,
+        "resumo": relatorio.resumo,
+        "arquivo_nome": relatorio.arquivo_nome,
+        "arquivo_tipo": relatorio.arquivo_tipo,
+        "arquivo_path": getattr(relatorio, 'arquivo_path', None),
+        "arquivo_base64": relatorio.arquivo_base64,
+        "dados_extraidos": dados_extraidos,
+        "condicoes": condicoes,
+        "created_at": relatorio.created_at.isoformat() if relatorio.created_at else None,
+        "updated_at": relatorio.updated_at.isoformat() if relatorio.updated_at else None,
+        "processando": processando,
+        "message": "Relatório sendo processado pela IA..." if processando else None
+    }
 
 
 @router.delete("/{relatorio_id}")

@@ -40,7 +40,12 @@ class Relatorio(Base):
     # Arquivo original
     arquivo_nome = Column(String(255))
     arquivo_tipo = Column(String(50))  # application/pdf, image/jpeg, etc.
-    arquivo_base64 = Column(Text)  # Arquivo em base64 para download
+    
+    # NOVO: Caminho do arquivo no storage
+    arquivo_path = Column(String(500), nullable=True)  # Ex: "relatorio_1_20241219_abc123.pdf"
+    
+    # ALTERADO: Agora aceita NULL (sistema antigo usava, novo não usa mais)
+    arquivo_base64 = Column(Text, nullable=True)  # Arquivo em base64 (DEPRECATED - usar arquivo_path)
     
     # Dados completos extraídos pela IA (JSON)
     dados_extraidos = Column(JSON)

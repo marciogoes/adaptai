@@ -1,15 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Optional, List
 import base64
 import json
+from pathlib import Path
 
 from app.database import get_db
 from app.core.config import settings
 from app.api.dependencies import get_current_active_user
 from app.models.user import User
+from app.models.relatorio import Relatorio
+from app.models.student import Student
 
 router = APIRouter(prefix="/pei", tags=["PEI - Plano Educacional Individualizado"])
+
+# Diretório de relatórios
+RELATORIOS_DIR = Path(__file__).parent.parent.parent.parent / "storage" / "relatorios"
 
 # Cliente Anthropic (inicialização lazy)
 _client = None

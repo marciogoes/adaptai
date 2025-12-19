@@ -1,10 +1,11 @@
 """
 Rotas de Relatórios de Terapias e Acompanhamento
-VERSÃO COM PROCESSAMENTO ASSÍNCRONO!
+VERSÃO COM PROCESSAMENTO ASSÍNCRONO - OTIMIZADO!
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import OperationalError
 from typing import List, Optional
 from pathlib import Path
 import base64
@@ -12,7 +13,7 @@ import json
 import os
 from datetime import datetime
 import hashlib
-import asyncio
+import time
 
 from app.database import get_db, SessionLocal
 from app.core.config import settings
@@ -66,6 +67,7 @@ def processar_relatorio_background(
     """
     print(f"🔄 [BACKGROUND] Iniciando análise do relatório {relatorio_id}...")
     
+    db = None
     try:
         client = get_anthropic_client()
         if not client:
@@ -92,9 +94,7 @@ Estrutura:
     "diagnosticos": [{"cid": "string", "descricao": "string"}],
     "condicoes_identificadas": {"tea": false, "tdah": false, "dislexia": false, ...},
     "resumo_clinico": "string",
-    "recomendacoes": ["string"],
-    "adaptacoes_sugeridas": {"curriculares": "", "avaliacao": "", "ambiente": "", "recursos": ""},
-    "observacoes": "string"
+    "recomendacoes": ["string"]
 }"""
 
         # Determinar media type
@@ -156,33 +156,58 @@ Estrutura:
         
         print(f"📄 [BACKGROUND] JSON salvo: {json_path}")
         
-        # Atualizar banco de dados
-        db = SessionLocal()
-        try:
-            relatorio = db.query(Relatorio).filter(Relatorio.id == relatorio_id).first()
-            if relatorio:
-                relatorio.tipo = dados_extraidos.get("tipo_laudo", "Relatório")[:100]
-                relatorio.profissional_nome = dados_extraidos.get("profissional", {}).get("nome", "")[:200]
-                relatorio.profissional_registro = dados_extraidos.get("profissional", {}).get("registro", "")[:50]
-                relatorio.profissional_especialidade = dados_extraidos.get("profissional", {}).get("especialidade", "")[:100]
-                relatorio.data_emissao = parse_date(dados_extraidos.get("datas", {}).get("emissao"))
-                relatorio.data_validade = parse_date(dados_extraidos.get("datas", {}).get("validade"))
-                relatorio.resumo = dados_extraidos.get("resumo_clinico", "")[:200]
-                
-                db.commit()
-                print(f"✅ [BACKGROUND] Relatório {relatorio_id} atualizado no banco!")
-            else:
-                print(f"⚠️ [BACKGROUND] Relatório {relatorio_id} não encontrado no banco")
-        except Exception as e:
-            print(f"❌ [BACKGROUND] Erro ao atualizar banco: {e}")
-            db.rollback()
-        finally:
-            db.close()
+        # Atualizar banco de dados com retry
+        for tentativa in range(3):
+            db = SessionLocal()
+            try:
+                relatorio = db.query(Relatorio).filter(Relatorio.id == relatorio_id).first()
+                if relatorio:
+                    relatorio.tipo = dados_extraidos.get("tipo_laudo", "Relatório")[:100]
+                    relatorio.profissional_nome = dados_extraidos.get("profissional", {}).get("nome", "")[:200]
+                    relatorio.profissional_registro = dados_extraidos.get("profissional", {}).get("registro", "")[:50]
+                    relatorio.profissional_especialidade = dados_extraidos.get("profissional", {}).get("especialidade", "")[:100]
+                    relatorio.data_emissao = parse_date(dados_extraidos.get("datas", {}).get("emissao"))
+                    relatorio.data_validade = parse_date(dados_extraidos.get("datas", {}).get("validade"))
+                    relatorio.resumo = dados_extraidos.get("resumo_clinico", "")[:200]
+                    
+                    db.commit()
+                    print(f"✅ [BACKGROUND] Relatório {relatorio_id} atualizado no banco!")
+                    break
+                else:
+                    print(f"⚠️ [BACKGROUND] Relatório {relatorio_id} não encontrado no banco")
+                    break
+                    
+            except OperationalError as e:
+                print(f"⚠️ [BACKGROUND] Tentativa {tentativa + 1}/3 falhou: {e}")
+                db.rollback()
+                db.close()
+                db = None
+                if tentativa < 2:
+                    time.sleep(1)  # Aguardar 1 segundo antes de tentar novamente
+                else:
+                    print(f"❌ [BACKGROUND] Falha após 3 tentativas")
+            except Exception as e:
+                print(f"❌ [BACKGROUND] Erro ao atualizar banco: {e}")
+                db.rollback()
+                break
+            finally:
+                if db:
+                    try:
+                        db.close()
+                    except:
+                        pass
+                    db = None
         
         print(f"🎉 [BACKGROUND] Processamento completo para relatório {relatorio_id}!")
         
     except Exception as e:
         print(f"❌ [BACKGROUND] Erro no processamento: {e}")
+    finally:
+        if db:
+            try:
+                db.close()
+            except:
+                pass
 
 
 def parse_date(date_str: str) -> Optional[datetime]:
@@ -195,9 +220,9 @@ def parse_date(date_str: str) -> Optional[datetime]:
         return None
 
 
-# ============= CRUD =============
+# ============= CRUD (mantém o mesmo) =============
 
-@router.get("/", response_model=RelatorioListResponse)
+@router.get("/")
 async def listar_relatorios(
     student_id: Optional[int] = None,
     skip: int = 0,
@@ -219,15 +244,21 @@ async def listar_relatorios(
     for r in relatorios:
         dados = r.dados_extraidos
         condicoes = r.condicoes
+        processando = False
         
         # Carregar JSON se existir
         if isinstance(dados, dict) and dados.get("json_path"):
             json_file = RELATORIOS_DIR / dados["json_path"]
             if json_file.exists():
-                with open(json_file, 'r', encoding='utf-8') as f:
-                    full_data = json.load(f)
-                    dados = full_data
-                    condicoes = full_data.get("condicoes_identificadas", {})
+                try:
+                    with open(json_file, 'r', encoding='utf-8') as f:
+                        full_data = json.load(f)
+                        dados = full_data
+                        condicoes = full_data.get("condicoes_identificadas", {})
+                except:
+                    pass
+            else:
+                processando = True
         
         rel_dict = {
             "id": r.id,
@@ -243,12 +274,12 @@ async def listar_relatorios(
             "arquivo_nome": r.arquivo_nome,
             "arquivo_tipo": r.arquivo_tipo,
             "arquivo_path": getattr(r, 'arquivo_path', None),
-            "dados_extraidos": dados,
+            "dados_extraidos": dados if not processando else None,
             "condicoes": condicoes,
             "created_at": r.created_at,
             "updated_at": r.updated_at,
             "student_name": r.student.name if r.student else None,
-            "processando": dados == {"json_path": dados.get("json_path")} if isinstance(dados, dict) else False
+            "processando": processando
         }
         result.append(rel_dict)
     
@@ -299,7 +330,9 @@ async def obter_relatorio(
                 with open(json_file, 'r', encoding='utf-8') as f:
                     dados = json.load(f)
                     return {
-                        **relatorio.__dict__,
+                        "id": relatorio.id,
+                        "student_id": relatorio.student_id,
+                        "tipo": relatorio.tipo,
                         "dados_extraidos": dados,
                         "condicoes": dados.get("condicoes_identificadas"),
                         "processando": False
@@ -307,7 +340,8 @@ async def obter_relatorio(
             else:
                 # JSON ainda não existe - processando
                 return {
-                    **relatorio.__dict__,
+                    "id": relatorio.id,
+                    "tipo": relatorio.tipo,
                     "processando": True,
                     "message": "Relatório sendo processado pela IA..."
                 }
@@ -405,7 +439,7 @@ async def upload_e_analisar_relatorio(
     # Criar registro MÍNIMO no banco
     novo_relatorio = Relatorio(
         student_id=student_id,
-        tipo="Processando...",  # Será atualizado
+        tipo="Processando...",
         profissional_nome="",
         profissional_registro="",
         profissional_especialidade="",
@@ -447,7 +481,7 @@ async def upload_e_analisar_relatorio(
         "relatorio_id": novo_relatorio.id,
         "arquivo_path": safe_pdf_filename,
         "json_path": safe_json_filename,
-        "message": "Upload realizado com sucesso! A análise com IA está sendo processada em background.",
+        "message": "✅ Upload realizado com sucesso! A análise com IA está sendo processada.",
         "status": "processing",
-        "tempo_estimado": "30-60 segundos"
+        "tempo_estimado": "20-30 segundos"
     }

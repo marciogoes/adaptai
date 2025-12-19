@@ -87,11 +87,16 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Configurar pasta de storage para arquivos estáticos
-storage_path = Path(__file__).parent.parent / "storage" / "materiais"
-storage_path.mkdir(parents=True, exist_ok=True)
-app.mount("/storage/materiais", StaticFiles(directory=str(storage_path)), name="materiais_storage")
-print(f"📁 Storage configurado: {storage_path}")
+# Configurar pastas de storage para arquivos estáticos
+storage_materiais_path = Path(__file__).parent.parent / "storage" / "materiais"
+storage_materiais_path.mkdir(parents=True, exist_ok=True)
+app.mount("/storage/materiais", StaticFiles(directory=str(storage_materiais_path)), name="materiais_storage")
+print(f"📁 Storage Materiais configurado: {storage_materiais_path}")
+
+storage_relatorios_path = Path(__file__).parent.parent / "storage" / "relatorios"
+storage_relatorios_path.mkdir(parents=True, exist_ok=True)
+app.mount("/storage/relatorios", StaticFiles(directory=str(storage_relatorios_path)), name="relatorios_storage")
+print(f"📁 Storage Relatórios configurado: {storage_relatorios_path}")
 
 # Incluir rotas
 app.include_router(auth.router, prefix="/api/v1", tags=["🔐 Authentication"])

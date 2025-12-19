@@ -3,11 +3,15 @@ Rotas de Relatórios de Terapias e Acompanhamento
 Módulo independente que serve como insumo para o PEI
 """
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from pathlib import Path
 import base64
 import json
+import os
 from datetime import datetime
+import hashlib
 
 from app.database import get_db
 from app.core.config import settings
@@ -31,6 +35,10 @@ _client = None
 
 # Modelo que suporta PDFs e imagens
 MODELO_VISAO = "claude-sonnet-4-20250514"
+
+# Diretório para salvar relatórios
+RELATORIOS_DIR = Path(__file__).parent.parent.parent.parent / "storage" / "relatorios"
+RELATORIOS_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_anthropic_client():
     global _client
@@ -78,6 +86,7 @@ async def listar_relatorios(
             "resumo": r.resumo,
             "arquivo_nome": r.arquivo_nome,
             "arquivo_tipo": r.arquivo_tipo,
+            "arquivo_path": getattr(r, 'arquivo_path', None),
             "dados_extraidos": r.dados_extraidos,
             "condicoes": r.condicoes,
             "created_at": r.created_at,
@@ -103,13 +112,42 @@ async def listar_relatorios_aluno(
     return relatorios
 
 
-@router.get("/{relatorio_id}", response_model=RelatorioComArquivo)
+@router.get("/{relatorio_id}/arquivo")
+async def obter_arquivo_relatorio(
+    relatorio_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """Obtém o arquivo do relatório para download"""
+    relatorio = db.query(Relatorio).filter(Relatorio.id == relatorio_id).first()
+    
+    if not relatorio:
+        raise HTTPException(status_code=404, detail="Relatório não encontrado")
+    
+    # Se tiver arquivo_path (novo sistema)
+    if hasattr(relatorio, 'arquivo_path') and relatorio.arquivo_path:
+        file_path = RELATORIOS_DIR / relatorio.arquivo_path
+        if file_path.exists():
+            return FileResponse(
+                path=file_path,
+                filename=relatorio.arquivo_nome,
+                media_type=relatorio.arquivo_tipo
+            )
+    
+    # Se tiver arquivo_base64 (sistema antigo)
+    if relatorio.arquivo_base64:
+        return {"arquivo_base64": relatorio.arquivo_base64}
+    
+    raise HTTPException(status_code=404, detail="Arquivo não encontrado")
+
+
+@router.get("/{relatorio_id}", response_model=RelatorioResponse)
 async def obter_relatorio(
     relatorio_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Obtém um relatório específico com arquivo"""
+    """Obtém um relatório específico"""
     relatorio = db.query(Relatorio).filter(Relatorio.id == relatorio_id).first()
     
     if not relatorio:
@@ -129,6 +167,12 @@ async def excluir_relatorio(
     
     if not relatorio:
         raise HTTPException(status_code=404, detail="Relatório não encontrado")
+    
+    # Excluir arquivo se existir
+    if hasattr(relatorio, 'arquivo_path') and relatorio.arquivo_path:
+        file_path = RELATORIOS_DIR / relatorio.arquivo_path
+        if file_path.exists():
+            file_path.unlink()
     
     db.delete(relatorio)
     db.commit()
@@ -199,7 +243,20 @@ async def upload_e_analisar_relatorio(
     if len(file_content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Arquivo muito grande. Máximo: 10MB")
     
-    # Converter para base64
+    # Gerar nome único para o arquivo
+    file_hash = hashlib.md5(file_content).hexdigest()[:12]
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_extension = Path(arquivo.filename).suffix
+    safe_filename = f"relatorio_{student_id}_{timestamp}_{file_hash}{file_extension}"
+    
+    # Salvar arquivo no storage
+    file_path = RELATORIOS_DIR / safe_filename
+    with open(file_path, "wb") as f:
+        f.write(file_content)
+    
+    print(f"📁 Relatório salvo em: {file_path}")
+    
+    # Converter para base64 para análise da IA
     file_base64 = base64.standard_b64encode(file_content).decode("utf-8")
     
     # Prompt para análise
@@ -336,7 +393,7 @@ Analise o documento e extraia todas as informações relevantes."""
                 "mensagem": "Não foi possível estruturar os dados automaticamente"
             }
         
-        # Criar relatório no banco
+        # Criar relatório no banco - SEM arquivo_base64!
         novo_relatorio = Relatorio(
             student_id=student_id,
             tipo=dados_extraidos.get("tipo_laudo", "Relatório de Acompanhamento"),
@@ -349,24 +406,35 @@ Analise o documento e extraia todas as informações relevantes."""
             resumo=dados_extraidos.get("resumo_clinico"),
             arquivo_nome=arquivo.filename,
             arquivo_tipo=content_type,
-            arquivo_base64=f"data:{content_type};base64,{file_base64}",
+            arquivo_base64=None,  # NÃO SALVAR - Causa erro MySQL!
             dados_extraidos=dados_extraidos,
             condicoes=dados_extraidos.get("condicoes_identificadas"),
             created_by=current_user.id
         )
         
+        # Adicionar arquivo_path se a coluna existir
+        if hasattr(Relatorio, 'arquivo_path'):
+            setattr(novo_relatorio, 'arquivo_path', safe_filename)
+        
         db.add(novo_relatorio)
         db.commit()
         db.refresh(novo_relatorio)
         
+        print(f"✅ Relatório salvo no banco: ID {novo_relatorio.id}")
+        
         return {
             "success": True,
             "relatorio_id": novo_relatorio.id,
+            "arquivo_path": safe_filename,
             "dados": dados_extraidos,
             "message": "Relatório analisado e salvo com sucesso"
         }
         
     except Exception as e:
+        # Em caso de erro, excluir arquivo salvo
+        if file_path.exists():
+            file_path.unlink()
+        
         print(f"[ERRO] Falha ao analisar relatório: {str(e)}")
         raise HTTPException(
             status_code=500,

@@ -70,16 +70,20 @@ async def listar_relatorios(
     total = query.count()
     relatorios = query.order_by(Relatorio.created_at.desc()).offset(skip).limit(limit).all()
     
-    # Adicionar nome do aluno e carregar JSON de arquivo se necessário
+    # Adicionar nome do aluno e carregar JSON de arquivo
     result = []
     for r in relatorios:
-        # Se dados_extraidos tem apenas referência ao arquivo, carregar
+        # Carregar JSON completo se existir
         dados = r.dados_extraidos
+        condicoes = r.condicoes
+        
         if isinstance(dados, dict) and dados.get("json_path"):
             json_file = RELATORIOS_DIR / dados["json_path"]
             if json_file.exists():
                 with open(json_file, 'r', encoding='utf-8') as f:
-                    dados = json.load(f)
+                    full_data = json.load(f)
+                    dados = full_data
+                    condicoes = full_data.get("condicoes_identificadas", {})
         
         rel_dict = {
             "id": r.id,
@@ -96,7 +100,7 @@ async def listar_relatorios(
             "arquivo_tipo": r.arquivo_tipo,
             "arquivo_path": getattr(r, 'arquivo_path', None),
             "dados_extraidos": dados,
-            "condicoes": r.condicoes,
+            "condicoes": condicoes,
             "created_at": r.created_at,
             "updated_at": r.updated_at,
             "student_name": r.student.name if r.student else None
@@ -161,7 +165,7 @@ async def obter_relatorio(
     if not relatorio:
         raise HTTPException(status_code=404, detail="Relatório não encontrado")
     
-    # Carregar dados completos do JSON se necessário
+    # Carregar dados completos do JSON
     if relatorio.dados_extraidos and isinstance(relatorio.dados_extraidos, dict):
         if relatorio.dados_extraidos.get("json_path"):
             json_file = RELATORIOS_DIR / relatorio.dados_extraidos["json_path"]
@@ -277,6 +281,8 @@ async def upload_e_analisar_relatorio(
     
     # Salvar PDF no storage
     pdf_path = RELATORIOS_DIR / safe_pdf_filename
+    json_path = RELATORIOS_DIR / safe_json_filename
+    
     with open(pdf_path, "wb") as f:
         f.write(file_content)
     
@@ -285,54 +291,31 @@ async def upload_e_analisar_relatorio(
     # Converter para base64 para análise da IA
     file_base64 = base64.standard_b64encode(file_content).decode("utf-8")
     
-    # Prompt para análise (mantém o mesmo)
-    prompt = """Analise este relatório de terapia, acompanhamento ou avaliação profissional e extraia as informações em formato JSON.
+    # Prompt para análise
+    prompt = """Analise este relatório e extraia as informações em formato JSON.
 
-Este documento pode ser um relatório de:
-- Psicopedagogo(a)
-- Terapeuta Ocupacional
-- Fonoaudiólogo(a)
-- Psicólogo(a)
-- Neuropsicólogo(a)
-- Neurologista
-- Psiquiatra
-- Pediatra
-- Neuropediatra
-- Fisioterapeuta
-- Assistente Social
-- Ou outro profissional de saúde/educação
+IMPORTANTE: Retorne APENAS o JSON, sem explicações.
 
-IMPORTANTE: Retorne APENAS o JSON, sem explicações ou texto adicional.
-
-Estrutura esperada:
+Estrutura:
 {
     "tipo_laudo": "string",
     "profissional": {"nome": "string", "registro": "string", "especialidade": "string"},
-    "paciente": {"nome": "string", "data_nascimento": "string", "idade": "string"},
-    "datas": {"emissao": "string", "validade": "string"},
+    "datas": {"emissao": "YYYY-MM-DD", "validade": "YYYY-MM-DD"},
     "diagnosticos": [{"cid": "string", "descricao": "string"}],
     "condicoes_identificadas": {"tea": false, "tdah": false, ...},
     "resumo_clinico": "string",
-    "recomendacoes": ["string"],
-    "adaptacoes_sugeridas": {"curriculares": "", "avaliacao": "", "ambiente": "", "recursos": ""},
-    "acompanhamentos_indicados": [{"profissional": "", "frequencia": ""}],
-    "observacoes": "string"
-}
-
-Se algum campo não estiver disponível, use null ou []."""
+    "recomendacoes": ["string"]
+}"""
 
     try:
         # Determinar media type
-        if content_type == "application/pdf":
-            media_type = "application/pdf"
-        elif content_type in ["image/jpeg", "image/jpg"]:
-            media_type = "image/jpeg"
-        elif content_type == "image/png":
-            media_type = "image/png"
-        elif content_type == "image/webp":
-            media_type = "image/webp"
-        else:
-            media_type = content_type
+        media_type = {
+            "application/pdf": "application/pdf",
+            "image/jpeg": "image/jpeg",
+            "image/jpg": "image/jpeg",
+            "image/png": "image/png",
+            "image/webp": "image/webp"
+        }.get(content_type, content_type)
 
         # Chamar Claude com visão
         message = client.messages.create(
@@ -363,12 +346,8 @@ Se algum campo não estiver disponível, use null ou []."""
         response_text = message.content[0].text.strip()
         
         # Limpar markdown
-        if response_text.startswith("```json"):
-            response_text = response_text[7:]
-        if response_text.startswith("```"):
-            response_text = response_text[3:]
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
+        for marker in ["```json", "```"]:
+            response_text = response_text.replace(marker, "")
         response_text = response_text.strip()
         
         try:
@@ -380,35 +359,36 @@ Se algum campo não estiver disponível, use null ou []."""
                 "mensagem": "Não foi possível estruturar os dados automaticamente"
             }
         
-        # Salvar JSON completo em arquivo separado
-        json_path = RELATORIOS_DIR / safe_json_filename
+        # Salvar JSON completo em arquivo
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(dados_extraidos, f, ensure_ascii=False, indent=2)
         
         print(f"📄 JSON salvo em: {json_path}")
         
-        # Criar relatório no banco - APENAS referência ao JSON!
+        # Criar relatório no banco - MÍNIMO DE DADOS!
         novo_relatorio = Relatorio(
             student_id=student_id,
-            tipo=dados_extraidos.get("tipo_laudo", "Relatório de Acompanhamento"),
-            profissional_nome=dados_extraidos.get("profissional", {}).get("nome"),
-            profissional_registro=dados_extraidos.get("profissional", {}).get("registro"),
-            profissional_especialidade=dados_extraidos.get("profissional", {}).get("especialidade"),
+            tipo=dados_extraidos.get("tipo_laudo", "Relatório")[:100],  # Limitar tamanho
+            profissional_nome=dados_extraidos.get("profissional", {}).get("nome", "")[:200],
+            profissional_registro=dados_extraidos.get("profissional", {}).get("registro", "")[:50],
+            profissional_especialidade=dados_extraidos.get("profissional", {}).get("especialidade", "")[:100],
             data_emissao=parse_date(dados_extraidos.get("datas", {}).get("emissao")),
             data_validade=parse_date(dados_extraidos.get("datas", {}).get("validade")),
-            cid=", ".join([d.get("cid", "") for d in dados_extraidos.get("diagnosticos", []) if d.get("cid")]),
-            resumo=dados_extraidos.get("resumo_clinico", "")[:500],  # Máximo 500 chars
-            arquivo_nome=arquivo.filename,
-            arquivo_tipo=content_type,
+            cid="",  # Vazio - ler do JSON
+            resumo=dados_extraidos.get("resumo_clinico", "")[:200],  # Máximo 200 chars
+            arquivo_nome=arquivo.filename[:255],
+            arquivo_tipo=content_type[:50],
             arquivo_base64=None,  # NÃO SALVAR
             dados_extraidos={"json_path": safe_json_filename},  # SÓ REFERÊNCIA!
-            condicoes=dados_extraidos.get("condicoes_identificadas"),
+            condicoes=None,  # NÃO SALVAR - Ler do JSON!
             created_by=current_user.id
         )
         
         # Adicionar arquivo_path
         if hasattr(Relatorio, 'arquivo_path'):
             setattr(novo_relatorio, 'arquivo_path', safe_pdf_filename)
+        
+        print(f"💾 Tentando salvar no banco...")
         
         db.add(novo_relatorio)
         db.commit()
@@ -444,6 +424,6 @@ def parse_date(date_str: str) -> Optional[datetime]:
     if not date_str:
         return None
     try:
-        return datetime.strptime(date_str, "%Y-%m-%d")
+        return datetime.strptime(date_str, "%Y-%m-%D")
     except:
         return None

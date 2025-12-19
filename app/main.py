@@ -19,6 +19,7 @@ from app.api.routes import analise_qualitativa  # ANÁLISE QUALITATIVA COM IA
 from app.api.routes import prova_adaptativa  # PROVA ADAPTATIVA (REFORÇO)
 from app.api.routes import pei  # PEI COM IA
 from app.api.routes import relatorios  # RELATÓRIOS DE TERAPIAS
+from app.api.routes import relatorios_analise  # ANÁLISE CONSOLIDADA DE RELATÓRIOS
 
 # Criar tabelas
 Base.metadata.create_all(bind=engine)
@@ -113,6 +114,7 @@ app.include_router(analise_qualitativa.router, prefix="/api/v1", tags=["🤖 An�
 app.include_router(prova_adaptativa.router, prefix="/api/v1", tags=["🎯 Prova Adaptativa (Reforço)"])  # PROVA DE REFORÇO!
 app.include_router(pei.router, prefix="/api/v1", tags=["❤️ PEI com IA"])  # PEI COM IA!
 app.include_router(relatorios.router, prefix="/api/v1", tags=["📋 Relatórios de Terapias"])  # RELATÓRIOS!
+app.include_router(relatorios_analise.router, prefix="/api/v1", tags=["🎨 Jornada Terapêutica"])  # ANÁLISE CONSOLIDADA!
 
 # Rotas principais
 @app.get("/", tags=["Root"])

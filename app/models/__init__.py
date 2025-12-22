@@ -4,6 +4,7 @@ from app.models.question import QuestionSet, Question, DifficultyLevel
 from app.models.application import Application, StudentAnswer, ApplicationStatus
 from app.models.performance import PerformanceAnalysis
 from app.models.relatorio import Relatorio
+from app.models.material_adaptado_gerado import MaterialAdaptadoGerado
 from app.models.prova import (
     Prova, 
     QuestaoGerada, 
@@ -27,6 +28,7 @@ __all__ = [
     "ApplicationStatus",
     "PerformanceAnalysis",
     "Relatorio",
+    "MaterialAdaptadoGerado",
     "Prova",
     "QuestaoGerada",
     "ProvaAluno",

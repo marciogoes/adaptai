@@ -21,6 +21,11 @@ from app.api.routes import pei  # PEI COM IA
 from app.api.routes import relatorios  # RELATÓRIOS DE TERAPIAS
 from app.api.routes import relatorios_analise  # ANÁLISE CONSOLIDADA DE RELATÓRIOS
 from app.api.routes import materiais_adaptados  # MATERIAIS ADAPTADOS COM IA
+from app.api.routes import planos  # PLANOS E ASSINATURAS MULTI-TENANT
+from app.api.routes import escolas  # ESCOLAS (TENANTS)
+from app.api.routes import planejamento_bncc  # PLANEJAMENTO BNCC E PEI
+from app.api.routes import calendario_atividades  # CALENDÁRIO DE ATIVIDADES PEI
+from app.api.routes import student_pei  # PEI PARA PORTAL DO ALUNO
 
 # Criar tabelas
 Base.metadata.create_all(bind=engine)
@@ -117,6 +122,11 @@ app.include_router(pei.router, prefix="/api/v1", tags=["❤️ PEI com IA"])  # 
 app.include_router(relatorios.router, prefix="/api/v1", tags=["📋 Relatórios de Terapias"])  # RELATÓRIOS!
 app.include_router(relatorios_analise.router, prefix="/api/v1", tags=["🎨 Jornada Terapêutica"])  # ANÁLISE CONSOLIDADA!
 app.include_router(materiais_adaptados.router, prefix="/api/v1", tags=["🎨 Materiais Adaptados"])  # MATERIAIS ADAPTADOS!
+app.include_router(planos.router, prefix="/api/v1", tags=["💳 Planos e Assinaturas"])  # MULTI-TENANT!
+app.include_router(escolas.router, prefix="/api/v1", tags=["🏫 Escolas"])  # MULTI-TENANT!
+app.include_router(planejamento_bncc.router, prefix="/api/v1", tags=["📚 Planejamento BNCC"])  # PLANEJAMENTO BNCC E PEI!
+app.include_router(calendario_atividades.router, prefix="/api/v1", tags=["📅 Calendário Atividades"])  # CALENDÁRIO PEI
+app.include_router(student_pei.router, prefix="/api/v1/student", tags=["🎯 PEI Estudante"])  # PEI PORTAL ALUNO
 
 # Rotas principais
 @app.get("/", tags=["Root"])

@@ -4,12 +4,16 @@
 """
 Endpoints para importar e gerenciar registros diários
 de aulas a partir de PDFs escolares.
+
+INTEGRAÇÃO:
+- Cria eventos na Agenda do Professor automaticamente
+- Fornece sugestões para Materiais e Provas
 """
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 import shutil
 import uuid
@@ -19,6 +23,7 @@ from app.api.dependencies import get_current_active_user
 from app.models.user import User
 from app.models.student import Student
 from app.models.registro_diario import RegistroDiario, AulaRegistrada
+from app.models.agenda import AgendaProfessor, TipoEvento, StatusEvento
 from app.services.relatorio_extrator_service import relatorio_extrator_service
 
 
@@ -29,11 +34,80 @@ UPLOAD_DIR = Path(__file__).parent.parent.parent.parent / "storage" / "registros
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def criar_eventos_agenda(
+    db: Session,
+    professor_id: int,
+    student_id: int,
+    data_aula: date,
+    aulas: List[AulaRegistrada],
+    serie_turma: str = None
+):
+    """
+    Cria eventos na agenda do professor baseado nas aulas registradas.
+    Cada disciplina vira um evento.
+    """
+    eventos_criados = []
+    
+    # Horários base para as aulas (simulados)
+    horarios = [
+        (time(7, 30), time(8, 20)),
+        (time(8, 20), time(9, 10)),
+        (time(9, 30), time(10, 20)),
+        (time(10, 20), time(11, 10)),
+        (time(11, 10), time(12, 0)),
+    ]
+    
+    for i, aula in enumerate(aulas):
+        # Usar horário base ou gerar sequencialmente
+        hora_inicio = horarios[i % len(horarios)][0] if i < len(horarios) else time(8 + i, 0)
+        hora_fim = horarios[i % len(horarios)][1] if i < len(horarios) else time(8 + i, 50)
+        
+        # Descrição do evento
+        descricao = f"📚 {aula.conteudo}"
+        if aula.atividade_sala:
+            descricao += f"\n\n📝 Atividade: {aula.atividade_sala}"
+        if aula.paginas:
+            descricao += f"\n📄 Páginas: {aula.paginas}"
+        if aula.modulo:
+            descricao += f"\n📖 Módulo: {aula.modulo}"
+        if aula.tem_dever_casa:
+            descricao += f"\n\n🏠 TEM DEVER DE CASA"
+        if aula.tem_atividade_avaliativa:
+            descricao += f"\n\n⚠️ TEM ATIVIDADE AVALIATIVA"
+        
+        # Título do evento
+        titulo = f"{aula.disciplina}"
+        if serie_turma:
+            titulo += f" - {serie_turma}"
+        
+        # Criar evento na agenda
+        evento = AgendaProfessor(
+            professor_id=professor_id,
+            student_id=student_id,
+            titulo=titulo,
+            descricao=descricao,
+            tipo=TipoEvento.AULA,
+            data=data_aula,
+            hora_inicio=hora_inicio,
+            hora_fim=hora_fim,
+            status=StatusEvento.CONCLUIDO,  # Já aconteceu
+            cor="#3B82F6" if not aula.tem_atividade_avaliativa else "#EF4444",  # Azul ou Vermelho
+            notas_privadas=f"Importado do registro diário - Prof. {aula.professor_nome}" if aula.professor_nome else "Importado do registro diário"
+        )
+        
+        db.add(evento)
+        eventos_criados.append(evento)
+    
+    db.commit()
+    return eventos_criados
+
+
 @router.post("/importar")
 async def importar_relatorio(
     arquivo: UploadFile = File(..., description="PDF do relatório diário"),
     student_id: Optional[int] = Query(None, description="ID do aluno (opcional)"),
     usar_visao: bool = Query(False, description="Usar análise de imagem (para PDFs escaneados)"),
+    criar_agenda: bool = Query(True, description="Criar eventos na agenda automaticamente"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -41,20 +115,17 @@ async def importar_relatorio(
     📤 Importar relatório diário de aulas (PDF)
     
     Faz upload de um PDF de relatório diário escolar e extrai
-    automaticamente todas as informações usando IA:
+    automaticamente todas as informações usando IA.
     
-    - Data da aula
-    - Série/Turma
-    - Disciplinas
-    - Conteúdos estudados
-    - Atividades realizadas
-    - Deveres de casa
-    - Atividades avaliativas
+    **INTEGRAÇÃO AUTOMÁTICA:**
+    - ✅ Cria eventos na Agenda do Professor (se `criar_agenda=true`)
+    - ✅ Dados disponíveis para sugestões de Materiais e Provas
     
     **Parâmetros:**
     - `arquivo`: PDF do relatório diário
     - `student_id`: ID do aluno (opcional, para associar)
     - `usar_visao`: Se True, usa análise de imagem (melhor para PDFs escaneados)
+    - `criar_agenda`: Se True, cria eventos na agenda automaticamente
     """
     
     # Verificar tipo de arquivo
@@ -65,6 +136,7 @@ async def importar_relatorio(
         )
     
     # Verificar aluno se fornecido
+    student = None
     if student_id:
         student = db.query(Student).filter(
             Student.id == student_id,
@@ -149,6 +221,18 @@ async def importar_relatorio(
     
     db.commit()
     
+    # Criar eventos na agenda (se aluno foi especificado e criar_agenda=True)
+    eventos_agenda = []
+    if student_id and criar_agenda:
+        eventos_agenda = criar_eventos_agenda(
+            db=db,
+            professor_id=current_user.id,
+            student_id=student_id,
+            data_aula=data_aula,
+            aulas=aulas_criadas,
+            serie_turma=dados.get("serie_turma")
+        )
+    
     return {
         "success": True,
         "message": f"Relatório importado com sucesso! {len(aulas_criadas)} aulas identificadas.",
@@ -157,6 +241,7 @@ async def importar_relatorio(
         "serie_turma": dados.get("serie_turma"),
         "escola": dados.get("escola"),
         "total_aulas": len(aulas_criadas),
+        "eventos_agenda_criados": len(eventos_agenda),
         "aulas": [
             {
                 "disciplina": a.disciplina,
@@ -166,6 +251,74 @@ async def importar_relatorio(
                 "tem_avaliacao": a.tem_atividade_avaliativa
             }
             for a in aulas_criadas
+        ],
+        "integracao": {
+            "agenda": f"{len(eventos_agenda)} eventos criados" if eventos_agenda else "Nenhum (aluno não selecionado ou criar_agenda=false)",
+            "materiais": "Disponível em /conteudos-aluno/{student_id}/sugestoes-material" if student_id else "Selecione um aluno",
+            "provas": "Disponível em /conteudos-aluno/{student_id}/sugestoes-prova" if student_id else "Selecione um aluno"
+        }
+    }
+
+
+@router.post("/{registro_id}/criar-agenda")
+async def criar_agenda_de_registro(
+    registro_id: int,
+    student_id: int = Query(..., description="ID do aluno para criar agenda"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    📅 Criar eventos na agenda a partir de um registro existente
+    
+    Use quando importou sem selecionar aluno e agora quer criar a agenda.
+    """
+    # Verificar registro
+    registro = db.query(RegistroDiario).filter(
+        RegistroDiario.id == registro_id,
+        RegistroDiario.professor_id == current_user.id
+    ).first()
+    
+    if not registro:
+        raise HTTPException(status_code=404, detail="Registro não encontrado")
+    
+    # Verificar aluno
+    student = db.query(Student).filter(
+        Student.id == student_id,
+        Student.created_by_user_id == current_user.id
+    ).first()
+    
+    if not student:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    
+    # Buscar aulas do registro
+    aulas = db.query(AulaRegistrada).filter(AulaRegistrada.registro_id == registro_id).all()
+    
+    # Atualizar student_id do registro se não tinha
+    if not registro.student_id:
+        registro.student_id = student_id
+        db.commit()
+    
+    # Criar eventos
+    eventos = criar_eventos_agenda(
+        db=db,
+        professor_id=current_user.id,
+        student_id=student_id,
+        data_aula=registro.data_aula,
+        aulas=aulas,
+        serie_turma=registro.serie_turma
+    )
+    
+    return {
+        "success": True,
+        "message": f"{len(eventos)} eventos criados na agenda",
+        "eventos": [
+            {
+                "id": e.id,
+                "titulo": e.titulo,
+                "data": e.data.isoformat(),
+                "hora": e.hora_inicio.isoformat() if e.hora_inicio else None
+            }
+            for e in eventos
         ]
     }
 
@@ -264,10 +417,7 @@ async def aulas_por_disciplina(
 ):
     """
     📚 Listar todas as aulas de uma disciplina específica
-    
-    Útil para ver o histórico de conteúdos estudados em uma matéria.
     """
-    # Query base
     query = db.query(AulaRegistrada).join(RegistroDiario).filter(
         RegistroDiario.professor_id == current_user.id,
         AulaRegistrada.disciplina.ilike(f"%{disciplina}%")
@@ -311,12 +461,7 @@ async def conteudos_estudados(
 ):
     """
     📖 Resumo de conteúdos estudados por disciplina
-    
-    Agrupa todos os conteúdos estudados nos últimos X dias,
-    organizados por disciplina.
     """
-    from datetime import timedelta
-    
     data_inicio = date.today() - timedelta(days=dias)
     
     query = db.query(AulaRegistrada).join(RegistroDiario).filter(
@@ -398,39 +543,31 @@ async def estatisticas_registros(
     """
     📊 Estatísticas dos registros diários
     """
-    from datetime import timedelta
-    
     hoje = date.today()
     inicio_mes = hoje.replace(day=1)
     
-    # Total de registros
     total_registros = db.query(func.count(RegistroDiario.id)).filter(
         RegistroDiario.professor_id == current_user.id
     ).scalar()
     
-    # Registros do mês
     registros_mes = db.query(func.count(RegistroDiario.id)).filter(
         RegistroDiario.professor_id == current_user.id,
         RegistroDiario.data_aula >= inicio_mes
     ).scalar()
     
-    # Total de aulas registradas
     total_aulas = db.query(func.count(AulaRegistrada.id)).join(RegistroDiario).filter(
         RegistroDiario.professor_id == current_user.id
     ).scalar()
     
-    # Disciplinas únicas
     disciplinas = db.query(AulaRegistrada.disciplina).join(RegistroDiario).filter(
         RegistroDiario.professor_id == current_user.id
     ).distinct().all()
     
-    # Aulas com dever de casa
     com_dever = db.query(func.count(AulaRegistrada.id)).join(RegistroDiario).filter(
         RegistroDiario.professor_id == current_user.id,
         AulaRegistrada.tem_dever_casa == True
     ).scalar()
     
-    # Aulas com avaliação
     com_avaliacao = db.query(func.count(AulaRegistrada.id)).join(RegistroDiario).filter(
         RegistroDiario.professor_id == current_user.id,
         AulaRegistrada.tem_atividade_avaliativa == True

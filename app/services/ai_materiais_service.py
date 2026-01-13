@@ -1,5 +1,6 @@
 """
 Service para geração de materiais adaptados com IA
+ATUALIZADO: Novos tipos de materiais (história social, sequenciamento, linha do tempo, jogo da memória)
 """
 import json
 from typing import Dict, Any, List
@@ -35,42 +36,19 @@ INFORMAÇÕES:
 
 NÍVEIS DE ADAPTAÇÃO:
 
-NÍVEL 1 (Básico - Deficiência Intelectual, TEA severo):
-- Frases MUITO curtas (máx 5-7 palavras)
-- Vocabulário SIMPLES
-- 1 ideia por parágrafo
-- Use emojis e símbolos
-- Conceitos concretos, evite abstrações
-- Tamanho: 3-4 parágrafos pequenos
-
-NÍVEL 2 (Intermediário - TDAH, Dislexia, TEA leve/moderado):
-- Frases médias (8-12 palavras)
-- Vocabulário acessível com alguns termos técnicos EXPLICADOS
-- Use bullets, numeração, destaques
-- Organize informação em blocos visuais
-- Tamanho: 5-7 parágrafos ou tópicos
-
-NÍVEL 3 (Avançado - Superdotação, sem dificuldades):
-- Texto acadêmico completo
-- Vocabulário técnico apropriado
-- Conexões interdisciplinares
-- Aprofundamentos e desafios
-- Tamanho: texto completo detalhado
-
-Além dos 3 textos, crie um GLOSSÁRIO com 5-8 termos técnicos principais e suas definições simples.
+NÍVEL 1 (Básico): Frases curtas, vocabulário simples, emojis, 3-4 parágrafos.
+NÍVEL 2 (Intermediário): Frases médias, termos técnicos explicados, bullets, 5-7 parágrafos.
+NÍVEL 3 (Avançado): Texto acadêmico completo com aprofundamentos.
 
 FORMATO DE RESPOSTA (JSON):
 {{
-  "nivel_1": "texto do nível 1",
-  "nivel_2": "texto do nível 2",
-  "nivel_3": "texto do nível 3",
-  "vocabulario_tecnico": {{
-    "termo1": "definição simples",
-    "termo2": "definição simples"
-  }}
+  "basico": "texto do nível 1",
+  "intermediario": "texto do nível 2",
+  "avancado": "texto do nível 3",
+  "vocabulario": {{"termo1": "definição simples"}}
 }}
 
-Retorne APENAS o JSON, sem markdown nem explicações."""
+Retorne APENAS o JSON."""
 
         response = self.client.messages.create(
             model=self.model,
@@ -79,42 +57,21 @@ Retorne APENAS o JSON, sem markdown nem explicações."""
         )
         
         result = response.content[0].text.strip()
-        # Limpar markdown se houver
         result = result.replace("```json", "").replace("```", "").strip()
         return json.loads(result)
     
-    def gerar_infografico(
-        self,
-        disciplina: str,
-        serie: str,
-        conteudo: str
-    ) -> Dict[str, Any]:
-        """Gera infográfico em formato markdown/texto estruturado"""
+    def gerar_infografico(self, disciplina: str, serie: str, conteudo: str) -> Dict[str, Any]:
+        """Gera infográfico em formato texto estruturado"""
         
         prompt = f"""Você é um designer educacional especializado em infográficos.
 
-TAREFA: Criar um INFOGRÁFICO em formato texto/markdown sobre o tema.
-
-INFORMAÇÕES:
-- Disciplina: {disciplina}
-- Série: {serie}
-- Tema: {conteudo}
-
-ESTRUTURA DO INFOGRÁFICO:
-1. Título impactante
-2. Conceito central grande
-3. 3-5 blocos de informação visual
-4. Use símbolos, emojis, setas (→, ←, ↓, ↑)
-5. Boxes, tabelas, diagramas em texto
-6. Destaque números e dados importantes
-
-Além do infográfico, sugira 3-5 elementos visuais que podem ser adicionados (fotos, ícones, gráficos).
+TAREFA: Criar um INFOGRÁFICO sobre {conteudo} ({disciplina}, {serie}).
 
 FORMATO DE RESPOSTA (JSON):
 {{
   "titulo": "título do infográfico",
-  "conteudo_markdown": "infográfico formatado em markdown/texto",
-  "elementos_visuais": ["sugestão 1", "sugestão 2", "sugestão 3"]
+  "conteudo_markdown": "infográfico formatado em markdown",
+  "elementos_visuais": ["sugestão 1", "sugestão 2"]
 }}
 
 Retorne APENAS o JSON."""
@@ -129,43 +86,15 @@ Retorne APENAS o JSON."""
         result = result.replace("```json", "").replace("```", "").strip()
         return json.loads(result)
     
-    def gerar_flashcards(
-        self,
-        disciplina: str,
-        serie: str,
-        conteudo: str
-    ) -> Dict[str, Any]:
+    def gerar_flashcards(self, disciplina: str, serie: str, conteudo: str) -> Dict[str, Any]:
         """Gera conjunto de flashcards"""
         
-        prompt = f"""Você é um especialista em técnicas de memorização e estudo.
-
-TAREFA: Criar 10-15 FLASHCARDS sobre o tema.
-
-INFORMAÇÕES:
-- Disciplina: {disciplina}
-- Série: {serie}
-- Tema: {conteudo}
-
-ESTRUTURA DE CADA FLASHCARD:
-- FRENTE: Pergunta, termo, conceito, fórmula
-- VERSO: Resposta, definição, explicação
-- DICA: (opcional) Mnemônico, exemplo, imagem sugerida
-
-TIPOS DE CARDS:
-- Definições (O que é...?)
-- Fórmulas (Qual a fórmula de...?)
-- Aplicações (Quando usar...?)
-- Exemplos (Dê um exemplo de...)
-- Comparações (Diferença entre... e...?)
+        prompt = f"""Criar 10-15 FLASHCARDS sobre {conteudo} ({disciplina}, {serie}).
 
 FORMATO DE RESPOSTA (JSON):
 {{
   "cards": [
-    {{
-      "frente": "Pergunta ou termo",
-      "verso": "Resposta ou definição",
-      "dica": "Dica opcional"
-    }}
+    {{"pergunta": "Pergunta", "resposta": "Resposta", "dica": "Dica opcional"}}
   ]
 }}
 
@@ -181,44 +110,18 @@ Retorne APENAS o JSON."""
         result = result.replace("```json", "").replace("```", "").strip()
         return json.loads(result)
     
-    def gerar_caca_palavras(
-        self,
-        disciplina: str,
-        serie: str,
-        conteudo: str
-    ) -> Dict[str, Any]:
+    def gerar_caca_palavras(self, disciplina: str, serie: str, conteudo: str) -> Dict[str, Any]:
         """Gera caça-palavras adaptado"""
         
-        prompt = f"""Você é um criador de atividades educativas.
-
-TAREFA: Criar CAÇA-PALAVRAS (ou "BUSCA DE TERMOS") sobre o tema.
-
-INFORMAÇÕES:
-- Disciplina: {disciplina}
-- Série: {serie}
-- Tema: {conteudo}
-
-INSTRUÇÕES:
-1. Liste 8-12 TERMOS-CHAVE relacionados ao tema
-2. Termos devem ser técnicos/acadêmicos (não infantilizar)
-3. Crie uma matriz 12x12 com as palavras escondidas
-4. Palavras podem estar: horizontal →, vertical ↓, diagonal ↘
-5. Preencha espaços vazios com letras aleatórias
+        prompt = f"""Criar CAÇA-PALAVRAS sobre {conteudo} ({disciplina}, {serie}).
 
 FORMATO DE RESPOSTA (JSON):
 {{
   "titulo": "BUSCA DE TERMOS: [tema]",
-  "palavras": ["palavra1", "palavra2", ...],
-  "matriz": [
-    ["A", "B", "C", ...],
-    ["D", "E", "F", ...],
-    ...
-  ],
-  "tamanho": "12x12",
-  "nivel_dificuldade": "médio"
+  "palavras": ["palavra1", "palavra2"],
+  "matriz": [["A", "B", "C"]],
+  "tamanho": "12x12"
 }}
-
-IMPORTANTE: A matriz deve ser uma lista de 12 listas, cada uma com 12 letras.
 
 Retorne APENAS o JSON."""
 
@@ -232,56 +135,16 @@ Retorne APENAS o JSON."""
         result = result.replace("```json", "").replace("```", "").strip()
         return json.loads(result)
     
-    def gerar_bingo_educativo(
-        self,
-        disciplina: str,
-        serie: str,
-        conteudo: str
-    ) -> Dict[str, Any]:
+    def gerar_bingo_educativo(self, disciplina: str, serie: str, conteudo: str) -> Dict[str, Any]:
         """Gera bingo educativo"""
         
-        prompt = f"""Você é um criador de jogos educativos.
-
-TAREFA: Criar BINGO EDUCATIVO sobre o tema.
-
-INFORMAÇÕES:
-- Disciplina: {disciplina}
-- Série: {serie}
-- Tema: {conteudo}
-
-ESTRUTURA:
-1. Determine o tipo de bingo:
-   - Termos técnicos
-   - Fórmulas
-   - Conceitos
-   - Símbolos/elementos
-
-2. Crie 4 cartelas diferentes (5x5 cada)
-
-3. Para cada item possível:
-   - CHAMADA: O que o professor vai dizer/perguntar
-   - RESPOSTA: O que está na cartela
-
-EXEMPLO:
-Professor chama: "Número atômico 6"
-Aluno marca na cartela: "C" (Carbono)
+        prompt = f"""Criar BINGO EDUCATIVO sobre {conteudo} ({disciplina}, {serie}).
 
 FORMATO DE RESPOSTA (JSON):
 {{
   "titulo": "BINGO: [tema]",
-  "tipo": "termos/formulas/conceitos",
-  "cartelas": [
-    ["item1", "item2", "item3", "item4", "item5",
-     "item6", "item7", "LIVRE", "item8", "item9",
-     ...],
-    [cartela 2],
-    [cartela 3],
-    [cartela 4]
-  ],
-  "chamadas": [
-    {{"chamada": "Professor diz...", "resposta": "Aluno marca..."}},
-    ...
-  ]
+  "cartelas": [["item1", "item2", "LIVRE", "item3"]],
+  "chamadas": [{{"chamada": "Professor diz...", "resposta": "Aluno marca..."}}]
 }}
 
 Retorne APENAS o JSON."""
@@ -297,82 +160,22 @@ Retorne APENAS o JSON."""
         return json.loads(result)
     
     def gerar_avaliacao_multiformato(
-        self,
-        disciplina: str,
-        serie: str,
-        conteudo: str,
-        diagnosticos: Dict[str, Any]
+        self, disciplina: str, serie: str, conteudo: str, diagnosticos: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Gera avaliação em 3 formatos diferentes"""
         
-        prompt = f"""Você é um especialista em avaliação educacional inclusiva.
+        prompt = f"""Criar AVALIAÇÃO em 3 FORMATOS sobre {conteudo} ({disciplina}, {serie}).
+Diagnósticos: {json.dumps(diagnosticos, ensure_ascii=False)}
 
-TAREFA: Criar AVALIAÇÃO em 3 FORMATOS sobre o tema.
-
-INFORMAÇÕES:
-- Disciplina: {disciplina}
-- Série: {serie}
-- Tema: {conteudo}
-- Diagnósticos: {json.dumps(diagnosticos, ensure_ascii=False)}
-
-FORMATO A - Prova Escrita Padrão:
-- 10 questões
-- Múltipla escolha e discursivas
-- Formato tradicional
-
-FORMATO B - Prova Adaptada:
-- 5-7 questões
-- Uma questão por página
-- Enunciados curtos e claros
-- Imagens/diagramas quando possível
-- Espaço ampliado para respostas
-- Banco de palavras para completar
-
-FORMATO C - Avaliação Oral (Roteiro para Professor):
-- 5 perguntas-chave
-- Como fazer a pergunta
-- O que aceitar como resposta correta
-- Critérios de avaliação
+FORMATO A - Prova Escrita Padrão (10 questões)
+FORMATO B - Prova Adaptada (5-7 questões simplificadas)
+FORMATO C - Roteiro de Avaliação Oral (5 perguntas)
 
 FORMATO DE RESPOSTA (JSON):
 {{
-  "formato_a": {{
-    "titulo": "Avaliação - [tema]",
-    "questoes": [
-      {{
-        "numero": 1,
-        "tipo": "multipla_escolha",
-        "enunciado": "...",
-        "alternativas": ["a) ...", "b) ...", "c) ...", "d) ..."],
-        "resposta_correta": "b"
-      }},
-      {{
-        "numero": 2,
-        "tipo": "discursiva",
-        "enunciado": "...",
-        "criterios_correcao": "..."
-      }}
-    ]
-  }},
-  "formato_b": {{
-    "titulo": "Avaliação Adaptada - [tema]",
-    "questoes": [...],
-    "observacoes": "Tempo estendido: 2x. Permitido uso de calculadora."
-  }},
-  "formato_c": {{
-    "titulo": "Roteiro de Avaliação Oral - [tema]",
-    "questoes": [
-      {{
-        "numero": 1,
-        "pergunta_professor": "Como fazer a pergunta",
-        "respostas_aceitas": ["resposta 1", "resposta 2"],
-        "criterios": [
-          "Critério 1 para avaliar",
-          "Critério 2 para avaliar"
-        ]
-      }}
-    ]
-  }}
+  "formato_a": {{"titulo": "...", "questoes": [...]}},
+  "formato_b": {{"titulo": "...", "questoes": [...], "observacoes": "..."}},
+  "formato_c": {{"titulo": "...", "questoes": [...]}}
 }}
 
 Retorne APENAS o JSON."""
@@ -387,42 +190,17 @@ Retorne APENAS o JSON."""
         result = result.replace("```json", "").replace("```", "").strip()
         return json.loads(result)
     
-    def gerar_mapa_mental(
-        self,
-        disciplina: str,
-        serie: str,
-        conteudo: str
-    ) -> Dict[str, Any]:
-        """Gera mapa mental em formato Mermaid"""
+    def gerar_mapa_mental(self, disciplina: str, serie: str, conteudo: str) -> Dict[str, Any]:
+        """Gera mapa mental"""
         
-        prompt = f"""Você é um especialista em organização visual de conhecimento.
-
-TAREFA: Criar MAPA MENTAL sobre o tema.
-
-INFORMAÇÕES:
-- Disciplina: {disciplina}
-- Série: {serie}
-- Tema: {conteudo}
-
-ESTRUTURA:
-1. Conceito central
-2. 4-6 ramos principais
-3. Cada ramo com 2-4 sub-ramos
-4. Use cores/ícones para categorizar
-
-Além da estrutura em JSON, crie o código MERMAID para visualização.
+        prompt = f"""Criar MAPA MENTAL sobre {conteudo} ({disciplina}, {serie}).
 
 FORMATO DE RESPOSTA (JSON):
 {{
-  "conceito_central": "tema principal",
-  "ramos_principais": [
-    {{
-      "titulo": "Ramo 1",
-      "cor": "azul",
-      "subramos": ["sub1", "sub2", "sub3"]
-    }}
-  ],
-  "markdown_mermaid": "código mermaid aqui"
+  "tema_central": "tema principal",
+  "ramos": [
+    {{"titulo": "Ramo 1", "subtopicos": ["sub1", "sub2"]}}
+  ]
 }}
 
 Retorne APENAS o JSON."""
@@ -430,6 +208,216 @@ Retorne APENAS o JSON."""
         response = self.client.messages.create(
             model=self.model,
             max_tokens=3072,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        result = response.content[0].text.strip()
+        result = result.replace("```json", "").replace("```", "").strip()
+        return json.loads(result)
+
+    # ==========================================
+    # NOVOS MATERIAIS ADAPTADOS
+    # ==========================================
+    
+    def gerar_historia_social(
+        self,
+        disciplina: str,
+        serie: str,
+        conteudo: str,
+        diagnosticos: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Gera História Social - muito útil para TEA e TDAH
+        Narrativas que ensinam comportamentos e situações sociais
+        """
+        
+        prompt = f"""Você é um especialista em educação inclusiva e histórias sociais para crianças com TEA.
+
+TAREFA: Criar uma HISTÓRIA SOCIAL sobre o tema/situação.
+
+INFORMAÇÕES:
+- Disciplina: {disciplina}
+- Série: {serie}
+- Tema/Situação: {conteudo}
+
+O QUE É UMA HISTÓRIA SOCIAL:
+- Narrativa curta em 1ª pessoa
+- Descreve uma situação específica
+- Explica comportamentos esperados
+- Usa linguagem CONCRETA e LITERAL
+- Ajuda a entender regras sociais implícitas
+
+ESTRUTURA:
+1. Introdução: Descreve a situação/contexto
+2. Desenvolvimento: O que acontece, o que as pessoas fazem/sentem
+3. Comportamento Esperado: O que EU devo fazer
+4. Consequência Positiva: O que acontece quando faço certo
+
+REGRAS:
+- Frases curtas e diretas
+- Evite metáforas, ironias ou linguagem figurada
+- Use "Eu posso...", "Eu vou tentar...", "Está tudo bem se..."
+- Máximo 8-10 frases
+
+FORMATO DE RESPOSTA (JSON):
+{{
+  "titulo": "Título da História",
+  "situacao": "Descrição breve da situação",
+  "historia": "Texto completo da história social",
+  "frases_chave": ["frase 1 para memorizar", "frase 2"],
+  "icones": ["🏫", "👋", "😊"],
+  "dica_professor": "Como usar esta história"
+}}
+
+Retorne APENAS o JSON."""
+
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        result = response.content[0].text.strip()
+        result = result.replace("```json", "").replace("```", "").strip()
+        return json.loads(result)
+    
+    def gerar_sequenciamento(
+        self,
+        disciplina: str,
+        serie: str,
+        conteudo: str
+    ) -> Dict[str, Any]:
+        """
+        Gera Sequenciamento Visual - etapas ilustradas de uma tarefa/processo
+        Muito útil para TEA, DI e TDAH
+        """
+        
+        prompt = f"""Você é um especialista em educação inclusiva e análise de tarefas.
+
+TAREFA: Criar um SEQUENCIAMENTO VISUAL (passo a passo) para: {conteudo}
+
+INFORMAÇÕES:
+- Disciplina: {disciplina}
+- Série: {serie}
+
+ESTRUTURA:
+1. Objetivo final claro
+2. 5-8 etapas sequenciais
+3. Cada etapa com: número, ação, ícone
+4. Checklist para marcar
+
+REGRAS:
+- 1 ação por etapa
+- Verbos no imperativo
+- Frases de no máximo 8 palavras
+
+FORMATO DE RESPOSTA (JSON):
+{{
+  "titulo": "Como fazer [atividade]",
+  "objetivo": "O que vai conseguir fazer no final",
+  "materiais": ["item 1", "item 2"],
+  "etapas": [
+    {{"numero": 1, "acao": "Ação curta", "icone": "📝", "dica": "Dica opcional"}}
+  ],
+  "verificacao": "Pergunta para confirmar que terminou",
+  "parabens": "Mensagem de parabéns"
+}}
+
+Retorne APENAS o JSON."""
+
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        result = response.content[0].text.strip()
+        result = result.replace("```json", "").replace("```", "").strip()
+        return json.loads(result)
+    
+    def gerar_linha_tempo(
+        self,
+        disciplina: str,
+        serie: str,
+        conteudo: str
+    ) -> Dict[str, Any]:
+        """
+        Gera Linha do Tempo - eventos em ordem cronológica
+        Útil para História, Ciências, Português
+        """
+        
+        prompt = f"""Criar LINHA DO TEMPO sobre {conteudo} ({disciplina}, {serie}).
+
+ESTRUTURA:
+- 5-8 eventos/marcos principais
+- Cada evento com: data/período, título, descrição curta
+- Conexões entre eventos
+
+FORMATO DE RESPOSTA (JSON):
+{{
+  "titulo": "Linha do Tempo: [tema]",
+  "periodo": "De [início] até [fim]",
+  "eventos": [
+    {{
+      "ordem": 1,
+      "data": "Data ou período",
+      "titulo": "Nome do evento",
+      "descricao": "Descrição curta",
+      "icone": "🔹",
+      "importancia": "alta/media/baixa"
+    }}
+  ],
+  "curiosidade": "Fato interessante"
+}}
+
+Retorne APENAS o JSON."""
+
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        result = response.content[0].text.strip()
+        result = result.replace("```json", "").replace("```", "").strip()
+        return json.loads(result)
+    
+    def gerar_jogo_memoria(
+        self,
+        disciplina: str,
+        serie: str,
+        conteudo: str
+    ) -> Dict[str, Any]:
+        """
+        Gera Jogo da Memória - pares de cartas com conceitos
+        Útil para memorização e associação
+        """
+        
+        prompt = f"""Criar JOGO DA MEMÓRIA educativo sobre {conteudo} ({disciplina}, {serie}).
+
+ESTRUTURA:
+- 8-12 pares de cartas
+- Cada par conecta: conceito + definição, pergunta + resposta, etc.
+
+FORMATO DE RESPOSTA (JSON):
+{{
+  "titulo": "Jogo da Memória: [tema]",
+  "instrucoes": "Como jogar",
+  "pares": [
+    {{
+      "id": 1,
+      "carta_a": {{"texto": "Conceito", "tipo": "conceito", "cor": "🔵"}},
+      "carta_b": {{"texto": "Definição", "tipo": "definicao", "cor": "🔵"}}
+    }}
+  ],
+  "dica_impressao": "Imprimir em cartolina"
+}}
+
+Retorne APENAS o JSON."""
+
+        response = self.client.messages.create(
+            model=self.model,
+            max_tokens=2048,
             messages=[{"role": "user", "content": prompt}]
         )
         

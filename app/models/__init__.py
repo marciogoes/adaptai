@@ -81,6 +81,12 @@ from app.models.agenda import (
     Recorrencia
 )
 
+# Registro Diário de Aulas
+from app.models.registro_diario import (
+    RegistroDiario,
+    AulaRegistrada
+)
+
 
 __all__ = [
     # Multi-tenant
@@ -160,4 +166,8 @@ __all__ = [
     "TipoEvento",
     "StatusEvento",
     "Recorrencia",
+    
+    # Registro Diário de Aulas
+    "RegistroDiario",
+    "AulaRegistrada",
 ]

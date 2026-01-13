@@ -28,6 +28,7 @@ from app.api.routes import calendario_atividades  # CALENDÁRIO DE ATIVIDADES PE
 from app.api.routes import student_pei  # PEI PARA PORTAL DO ALUNO
 from app.api.routes import diario_aprendizagem  # DIÁRIO DE APRENDIZAGEM COM IA
 from app.api.routes import agenda  # AGENDA DO PROFESSOR
+from app.api.routes import registro_diario  # REGISTRO DIÁRIO DE AULAS
 
 # Criar tabelas
 Base.metadata.create_all(bind=engine)
@@ -131,6 +132,7 @@ app.include_router(calendario_atividades.router, prefix="/api/v1", tags=["📅 C
 app.include_router(student_pei.router, prefix="/api/v1/student", tags=["🎯 PEI Estudante"])  # PEI PORTAL ALUNO
 app.include_router(diario_aprendizagem.router, prefix="/api/v1", tags=["📔 Diário de Aprendizagem"])  # DIÁRIO COM IA
 app.include_router(agenda.router, prefix="/api/v1", tags=["📅 Agenda do Professor"])  # AGENDA
+app.include_router(registro_diario.router, prefix="/api/v1", tags=["📚 Registro Diário"])  # REGISTRO DIÁRIO
 
 # Rotas principais
 @app.get("/", tags=["Root"])

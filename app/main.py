@@ -1,6 +1,8 @@
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from pathlib import Path
 from app.core.config import settings
 from app.database import engine, Base
@@ -67,37 +69,74 @@ app = FastAPI(
     }
 )
 
-# CORS - Permitir origens de desenvolvimento E produção
+# ============================================
+# CORS - Configuração robusta para produção
+# ============================================
+
+# Origens permitidas
+ALLOWED_ORIGINS = [
+    "https://adaptai-frontend.vercel.app",
+    "https://adaptai-frontend-*.vercel.app",  # Preview deployments
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:5176",
+    "http://localhost:5177",
+    "http://localhost:5178",
+    "http://localhost:5179",
+    "http://localhost:5180",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:5175",
+]
+
+# Em produção, usar configuração mais permissiva se necessário
+IS_PRODUCTION = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION")
+
+if IS_PRODUCTION:
+    print("[CORS] Modo de produção detectado - usando configuração permissiva")
+    # Em produção, permitir todas as origens temporariamente para debug
+    origins = ["*"]
+else:
+    origins = ALLOWED_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://adaptai-frontend.vercel.app",  # PRODUÇÃO VERCEL ✅
-        "http://localhost:3000", 
-        "http://localhost:5173", 
-        "http://localhost:5174", 
-        "http://localhost:5175", 
-        "http://localhost:5176", 
-        "http://localhost:5177", 
-        "http://localhost:5178", 
-        "http://localhost:5179", 
-        "http://localhost:5180", 
-        "http://127.0.0.1:3000", 
-        "http://127.0.0.1:5173", 
-        "http://127.0.0.1:5174", 
-        "http://127.0.0.1:5175", 
-        "http://127.0.0.1:5176", 
-        "http://127.0.0.1:5177", 
-        "http://127.0.0.1:5178", 
-        "http://127.0.0.1:5179", 
-        "http://127.0.0.1:5180"
-    ],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_origins=origins,
+    allow_credentials=True if not IS_PRODUCTION else False,  # Não pode usar credentials com "*"
+    allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
+    max_age=86400,  # Cache preflight por 24h
 )
 
-# Configurar pastas de storage para arquivos estáticos
+# Handler manual para OPTIONS (fallback)
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(request: Request, rest_of_path: str):
+    """
+    Handler para requisições OPTIONS (preflight CORS)
+    """
+    response = JSONResponse(content={"status": "ok"})
+    origin = request.headers.get("origin", "*")
+    
+    # Verificar se a origem é permitida
+    if origin in ALLOWED_ORIGINS or IS_PRODUCTION:
+        response.headers["Access-Control-Allow-Origin"] = origin if not IS_PRODUCTION else "*"
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Max-Age"] = "86400"
+    
+    return response
+
+# ============================================
+# Storage para arquivos estáticos
+# ============================================
+
 storage_materiais_path = Path(__file__).parent.parent / "storage" / "materiais"
 storage_materiais_path.mkdir(parents=True, exist_ok=True)
 app.mount("/storage/materiais", StaticFiles(directory=str(storage_materiais_path)), name="materiais_storage")
@@ -108,33 +147,43 @@ storage_relatorios_path.mkdir(parents=True, exist_ok=True)
 app.mount("/storage/relatorios", StaticFiles(directory=str(storage_relatorios_path)), name="relatorios_storage")
 print(f"📁 Storage Relatórios configurado: {storage_relatorios_path}")
 
+storage_registros_path = Path(__file__).parent.parent / "storage" / "registros_diarios"
+storage_registros_path.mkdir(parents=True, exist_ok=True)
+print(f"📁 Storage Registros Diários configurado: {storage_registros_path}")
+
+# ============================================
 # Incluir rotas
+# ============================================
+
 app.include_router(auth.router, prefix="/api/v1", tags=["🔐 Authentication"])
 app.include_router(students.router, prefix="/api/v1", tags=["👥 Students"])
 app.include_router(questions.router, prefix="/api/v1", tags=["📝 Questions"])
 app.include_router(applications.router, prefix="/api/v1", tags=["📋 Applications"])
 app.include_router(analytics.router, prefix="/api/v1", tags=["📊 Analytics"])
-app.include_router(provas.router, prefix="/api/v1", tags=["🎓 Provas (NOVO)"])  # NOVA ROTA!
-app.include_router(student_provas.router, prefix="/api/v1", tags=["🎓 Provas Estudantes"])  # ROTAS ESTUDANTES!
-app.include_router(professor_analytics.router, prefix="/api/v1", tags=["📊 Analytics Provas"])  # ANALYTICS PARA PROFESSORES!
-app.include_router(materiais.router, prefix="/api/v1", tags=["📚 Materiais"])  # MATERIAIS DE ESTUDO COM IA!
-app.include_router(student_materiais.router, prefix="/api/v1", tags=["📚 Student Materiais"])  # ALUNO VER MATERIAIS!
-app.include_router(analise_qualitativa.router, prefix="/api/v1", tags=["🤖 Análise Qualitativa IA"])  # ANÁLISE COM IA!
-app.include_router(prova_adaptativa.router, prefix="/api/v1", tags=["🎯 Prova Adaptativa (Reforço)"])  # PROVA DE REFORÇO!
-app.include_router(pei.router, prefix="/api/v1", tags=["❤️ PEI com IA"])  # PEI COM IA!
-app.include_router(relatorios.router, prefix="/api/v1", tags=["📋 Relatórios de Terapias"])  # RELATÓRIOS!
-app.include_router(relatorios_analise.router, prefix="/api/v1", tags=["🎨 Jornada Terapêutica"])  # ANÁLISE CONSOLIDADA!
-app.include_router(materiais_adaptados.router, prefix="/api/v1", tags=["🎨 Materiais Adaptados"])  # MATERIAIS ADAPTADOS!
-app.include_router(planos.router, prefix="/api/v1", tags=["💳 Planos e Assinaturas"])  # MULTI-TENANT!
-app.include_router(escolas.router, prefix="/api/v1", tags=["🏫 Escolas"])  # MULTI-TENANT!
-app.include_router(planejamento_bncc.router, prefix="/api/v1", tags=["📚 Planejamento BNCC"])  # PLANEJAMENTO BNCC E PEI!
-app.include_router(calendario_atividades.router, prefix="/api/v1", tags=["📅 Calendário Atividades"])  # CALENDÁRIO PEI
-app.include_router(student_pei.router, prefix="/api/v1/student", tags=["🎯 PEI Estudante"])  # PEI PORTAL ALUNO
-app.include_router(diario_aprendizagem.router, prefix="/api/v1", tags=["📔 Diário de Aprendizagem"])  # DIÁRIO COM IA
-app.include_router(agenda.router, prefix="/api/v1", tags=["📅 Agenda do Professor"])  # AGENDA
-app.include_router(registro_diario.router, prefix="/api/v1", tags=["📚 Registro Diário"])  # REGISTRO DIÁRIO
+app.include_router(provas.router, prefix="/api/v1", tags=["🎓 Provas (NOVO)"])
+app.include_router(student_provas.router, prefix="/api/v1", tags=["🎓 Provas Estudantes"])
+app.include_router(professor_analytics.router, prefix="/api/v1", tags=["📊 Analytics Provas"])
+app.include_router(materiais.router, prefix="/api/v1", tags=["📚 Materiais"])
+app.include_router(student_materiais.router, prefix="/api/v1", tags=["📚 Student Materiais"])
+app.include_router(analise_qualitativa.router, prefix="/api/v1", tags=["🤖 Análise Qualitativa IA"])
+app.include_router(prova_adaptativa.router, prefix="/api/v1", tags=["🎯 Prova Adaptativa (Reforço)"])
+app.include_router(pei.router, prefix="/api/v1", tags=["❤️ PEI com IA"])
+app.include_router(relatorios.router, prefix="/api/v1", tags=["📋 Relatórios de Terapias"])
+app.include_router(relatorios_analise.router, prefix="/api/v1", tags=["🎨 Jornada Terapêutica"])
+app.include_router(materiais_adaptados.router, prefix="/api/v1", tags=["🎨 Materiais Adaptados"])
+app.include_router(planos.router, prefix="/api/v1", tags=["💳 Planos e Assinaturas"])
+app.include_router(escolas.router, prefix="/api/v1", tags=["🏫 Escolas"])
+app.include_router(planejamento_bncc.router, prefix="/api/v1", tags=["📚 Planejamento BNCC"])
+app.include_router(calendario_atividades.router, prefix="/api/v1", tags=["📅 Calendário Atividades"])
+app.include_router(student_pei.router, prefix="/api/v1/student", tags=["🎯 PEI Estudante"])
+app.include_router(diario_aprendizagem.router, prefix="/api/v1", tags=["📔 Diário de Aprendizagem"])
+app.include_router(agenda.router, prefix="/api/v1", tags=["📅 Agenda do Professor"])
+app.include_router(registro_diario.router, prefix="/api/v1", tags=["📚 Registro Diário"])
 
+# ============================================
 # Rotas principais
+# ============================================
+
 @app.get("/", tags=["Root"])
 def root():
     """
@@ -144,27 +193,10 @@ def root():
         "message": "🎓 AdaptAI API - Sistema de Educação Inclusiva com IA",
         "version": settings.VERSION,
         "status": "running",
-        "novo": "🎓 Sistema de Provas com IA ativado!",
+        "cors": "enabled",
         "documentation": {
             "swagger": "/docs",
             "redoc": "/redoc"
-        },
-        "features": [
-            "Geração automática de provas com IA",
-            "Administrador define conteúdo/tema",
-            "IA gera questões automaticamente",
-            "Associação prova-aluno",
-            "Aluno faz prova online",
-            "Armazenamento completo de dados",
-            "Análise de desempenho com IA"
-        ],
-        "endpoints": {
-            "auth": "/api/v1/auth",
-            "students": "/api/v1/students",
-            "questions": "/api/v1/questions",
-            "applications": "/api/v1/applications",
-            "analytics": "/api/v1/analytics",
-            "provas": "/api/v1/provas"  # NOVO!
         }
     }
 
@@ -177,9 +209,7 @@ def health_check():
         "status": "healthy",
         "service": "AdaptAI Backend",
         "version": settings.VERSION,
-        "database": "MySQL 8.0 DBaaS",
-        "ai_engine": "Claude API (Anthropic)",
-        "features_enabled": ["prova_generation", "student_management", "analytics"]
+        "cors": "enabled"
     }
 
 @app.get("/info", tags=["Info"])
@@ -190,25 +220,14 @@ def info():
     return {
         "name": settings.APP_NAME,
         "version": settings.VERSION,
-        "description": "Sistema de educação inclusiva com geração automática de provas usando IA",
-        "tech_stack": {
-            "framework": "FastAPI",
-            "python_version": "3.12",
-            "database": "MySQL 8.0 DBaaS",
-            "ai_model": settings.CLAUDE_MODEL,
-            "orm": "SQLAlchemy"
-        },
-        "features": {
-            "auto_prova_generation": "✅ Enabled",
-            "ai_powered": "✅ Claude AI",
-            "student_assignment": "✅ Enabled",
-            "online_exam": "✅ Enabled",
-            "performance_analysis": "✅ Enabled",
-            "adaptive_difficulty": "✅ 4 levels"
-        }
+        "cors_enabled": True,
+        "production": bool(IS_PRODUCTION)
     }
 
+# ============================================
 # Event handlers
+# ============================================
+
 @app.on_event("startup")
 async def startup_event():
     """
@@ -220,7 +239,8 @@ async def startup_event():
     print(f"[PYTHON] 3.12")
     print(f"[DATABASE] MySQL 8.0 DBaaS")
     print(f"[AI MODEL] {settings.CLAUDE_MODEL}")
-    print(f"[FEATURE] Sistema de Provas com IA ativado!")
+    print(f"[CORS] Enabled - Origins: {'*' if IS_PRODUCTION else 'Restricted'}")
+    print(f"[PRODUCTION] {bool(IS_PRODUCTION)}")
     print("="*60)
 
 @app.on_event("shutdown")

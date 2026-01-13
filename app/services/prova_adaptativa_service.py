@@ -275,13 +275,13 @@ Gere a prova de reforço agora:
         """Associa prova de reforço ao aluno"""
         
         from app.models.prova import StatusProvaAluno
-        from datetime import datetime
+        from datetime import datetime, timezone
         
         prova_aluno = ProvaAluno(
             prova_id=prova_id,
             aluno_id=aluno_id,
             status=StatusProvaAluno.PENDENTE,
-            data_atribuicao=datetime.utcnow()
+            data_atribuicao=datetime.now(timezone.utc)
         )
         
         db.add(prova_aluno)

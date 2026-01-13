@@ -12,9 +12,9 @@ engine = create_engine(
     pool_recycle=180,  # REDUZIDO: Reconecta a cada 3 minutos (DBaaS agressivo)
     pool_timeout=60,  # AUMENTADO: 1 minuto para pegar conexão
     connect_args={
-        "connect_timeout": 180,  # AUMENTADO: Timeout de 3 minutos
-        "read_timeout": 180,     # AUMENTADO: 3 minutos de leitura
-        "write_timeout": 180,    # AUMENTADO: 3 minutos de escrita
+        "connect_timeout": 60,   # 1 minuto para conectar
+        "read_timeout": 60,      # 1 minuto de leitura
+        "write_timeout": 60,     # 1 minuto de escrita
         "charset": "utf8mb4"     # Suporte completo UTF-8
     },
     echo=settings.DEBUG

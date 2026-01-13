@@ -4,7 +4,7 @@
 
 from sqlalchemy import Column, Integer, String, Text, Date, DateTime, ForeignKey, Boolean, Enum, JSON
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
 
 from app.database import Base
@@ -70,8 +70,8 @@ class AtividadePEI(Base):
     observacoes_professor = Column(Text, nullable=True)
     
     # Metadados
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     
     # Relacionamentos
@@ -107,7 +107,7 @@ class SequenciaObjetivo(Base):
     gerado = Column(Boolean, default=False)
     data_geracao = Column(DateTime, nullable=True)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relacionamento
     objetivo = relationship("PEIObjetivo", back_populates="sequencia")

@@ -36,7 +36,7 @@ router = APIRouter(prefix="/relatorios", tags=["Relatórios de Terapias"])
 _client = None
 
 # Modelo que suporta PDFs e imagens
-MODELO_VISAO = "claude-sonnet-4-20250514"
+MODELO_VISAO = "claude-3-5-sonnet-20241022"
 
 # Diretório para salvar relatórios
 RELATORIOS_DIR = Path(__file__).parent.parent.parent.parent / "storage" / "relatorios"

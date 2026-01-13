@@ -5,7 +5,7 @@ Endpoints para gerenciamento de provas com IA
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database import get_db, SessionLocal
 from app.models.user import User
@@ -193,7 +193,7 @@ def atualizar_prova(
     for field, value in prova_update.dict(exclude_unset=True).items():
         setattr(prova, field, value)
     
-    prova.atualizado_em = datetime.utcnow()
+    prova.atualizado_em = datetime.now(timezone.utc)
     
     db.commit()
     db.refresh(prova)
@@ -365,7 +365,7 @@ def iniciar_prova(
         )
     
     prova_aluno.status = StatusProvaAluno.EM_ANDAMENTO
-    prova_aluno.data_inicio = datetime.utcnow()
+    prova_aluno.data_inicio = datetime.now(timezone.utc)
     
     db.commit()
     
@@ -447,11 +447,11 @@ async def finalizar_prova(
     aprovado = nota_final >= prova.nota_minima_aprovacao
     
     # Calcula tempo gasto
-    tempo_gasto = int((datetime.utcnow() - prova_aluno.data_inicio).total_seconds() / 60) if prova_aluno.data_inicio else 0
+    tempo_gasto = int((datetime.now(timezone.utc) - prova_aluno.data_inicio).total_seconds() / 60) if prova_aluno.data_inicio else 0
     
     # Atualiza prova_aluno
     prova_aluno.status = StatusProvaAluno.CONCLUIDA
-    prova_aluno.data_conclusao = datetime.utcnow()
+    prova_aluno.data_conclusao = datetime.now(timezone.utc)
     prova_aluno.pontuacao_obtida = pontuacao_obtida
     prova_aluno.nota_final = nota_final
     prova_aluno.aprovado = aprovado
@@ -502,7 +502,7 @@ async def finalizar_prova(
         prova_aluno.analise_ia = analise
         prova_aluno.feedback_ia = feedback
         prova_aluno.status = StatusProvaAluno.CORRIGIDA
-        prova_aluno.data_correcao = datetime.utcnow()
+        prova_aluno.data_correcao = datetime.now(timezone.utc)
         
         db.commit()
         

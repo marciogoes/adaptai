@@ -4,7 +4,7 @@ Sistema de geração de provas com IA
 """
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, Float, Boolean, JSON, Enum as SQLEnum
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
 from app.database import Base
 
@@ -68,8 +68,8 @@ class Prova(Base):
     
     # Status e datas
     status = Column(SQLEnum(StatusProva), default=StatusProva.RASCUNHO)
-    criado_em = Column(DateTime, default=datetime.utcnow)
-    atualizado_em = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    criado_em = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    atualizado_em = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Quem criou
     criado_por_id = Column(Integer, ForeignKey('users.id'))
@@ -108,7 +108,7 @@ class QuestaoGerada(Base):
     explicacao = Column(Text)  # Explicação da resposta correta
     tags = Column(JSON)  # Tags/tópicos abordados
     
-    criado_em = Column(DateTime, default=datetime.utcnow)
+    criado_em = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relacionamentos
     prova = relationship("Prova", back_populates="questoes")
@@ -128,7 +128,7 @@ class ProvaAluno(Base):
     
     # Status e datas
     status = Column(SQLEnum(StatusProvaAluno), default=StatusProvaAluno.PENDENTE)
-    data_atribuicao = Column(DateTime, default=datetime.utcnow)
+    data_atribuicao = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     data_inicio = Column(DateTime)  # Quando o aluno começou
     data_conclusao = Column(DateTime)  # Quando o aluno terminou
     data_correcao = Column(DateTime)  # Quando foi corrigida
@@ -177,7 +177,7 @@ class RespostaAluno(Base):
     
     # Tempo
     tempo_resposta_segundos = Column(Integer)  # Tempo que levou para responder
-    respondido_em = Column(DateTime, default=datetime.utcnow)
+    respondido_em = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relacionamentos
     prova_aluno = relationship("ProvaAluno", back_populates="respostas")

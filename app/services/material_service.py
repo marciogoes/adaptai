@@ -12,7 +12,7 @@ class MaterialGeracaoService:
     def __init__(self):
         """Inicializa o cliente da Anthropic (lazy)"""
         self._client = None
-        self.model = "claude-sonnet-4-20250514"
+        self.model = "claude-3-5-sonnet-20241022"
     
     @property
     def client(self):

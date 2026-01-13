@@ -26,6 +26,7 @@ from app.api.routes import escolas  # ESCOLAS (TENANTS)
 from app.api.routes import planejamento_bncc  # PLANEJAMENTO BNCC E PEI
 from app.api.routes import calendario_atividades  # CALENDÁRIO DE ATIVIDADES PEI
 from app.api.routes import student_pei  # PEI PARA PORTAL DO ALUNO
+from app.api.routes import diario_aprendizagem  # DIÁRIO DE APRENDIZAGEM COM IA
 
 # Criar tabelas
 Base.metadata.create_all(bind=engine)
@@ -49,7 +50,7 @@ app = FastAPI(
     
     ## 📊 Tecnologias
     
-    * Python 3.14 + FastAPI
+    * Python 3.12 + FastAPI
     * MySQL 8.0 DBaaS
     * Claude AI (Anthropic)
     * SQLAlchemy ORM
@@ -127,6 +128,7 @@ app.include_router(escolas.router, prefix="/api/v1", tags=["🏫 Escolas"])  # M
 app.include_router(planejamento_bncc.router, prefix="/api/v1", tags=["📚 Planejamento BNCC"])  # PLANEJAMENTO BNCC E PEI!
 app.include_router(calendario_atividades.router, prefix="/api/v1", tags=["📅 Calendário Atividades"])  # CALENDÁRIO PEI
 app.include_router(student_pei.router, prefix="/api/v1/student", tags=["🎯 PEI Estudante"])  # PEI PORTAL ALUNO
+app.include_router(diario_aprendizagem.router, prefix="/api/v1", tags=["📔 Diário de Aprendizagem"])  # DIÁRIO COM IA
 
 # Rotas principais
 @app.get("/", tags=["Root"])
@@ -187,7 +189,7 @@ def info():
         "description": "Sistema de educação inclusiva com geração automática de provas usando IA",
         "tech_stack": {
             "framework": "FastAPI",
-            "python_version": "3.14",
+            "python_version": "3.12",
             "database": "MySQL 8.0 DBaaS",
             "ai_model": settings.CLAUDE_MODEL,
             "orm": "SQLAlchemy"

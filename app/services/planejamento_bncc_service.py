@@ -16,7 +16,7 @@ from app.models.relatorio import Relatorio
 
 # Cliente Anthropic (inicialização lazy)
 _client = None
-MODELO_IA = "claude-sonnet-4-20250514"
+MODELO_IA = "claude-3-5-sonnet-20241022"
 
 
 def get_anthropic_client():

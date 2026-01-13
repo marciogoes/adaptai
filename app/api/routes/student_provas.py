@@ -4,7 +4,7 @@ Endpoints para estudantes verem e fazerem suas provas
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database import get_db
 from app.models.student import Student
@@ -76,7 +76,7 @@ def iniciar_prova(prova_aluno_id: int, current_student: Student = Depends(get_cu
         raise HTTPException(status_code=400, detail=f"Prova já está: {prova_aluno.status.value}")
     
     prova_aluno.status = StatusProvaAluno.EM_ANDAMENTO
-    prova_aluno.data_inicio = datetime.utcnow()
+    prova_aluno.data_inicio = datetime.now(timezone.utc)
     db.commit()
     
     return {"message": "Prova iniciada!", "status": "em_andamento"}

@@ -3,7 +3,7 @@ Model para Materiais Adaptados Gerados
 """
 from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 from app.database import Base
 
 
@@ -29,7 +29,7 @@ class MaterialAdaptadoGerado(Base):
     # Informações de geração
     tempo_geracao = Column(Integer, nullable=True)  # Em segundos
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     # Relacionamentos
     student = relationship("Student", back_populates="materiais_adaptados_gerados")

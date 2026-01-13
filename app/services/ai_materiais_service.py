@@ -12,7 +12,7 @@ class MaterialAdaptadoService:
     
     def __init__(self):
         self.client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self.model = "claude-sonnet-4-20250514"
+        self.model = "claude-3-5-sonnet-20241022"
     
     def gerar_texto_3_niveis(
         self, 

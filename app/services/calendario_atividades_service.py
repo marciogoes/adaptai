@@ -5,7 +5,7 @@
 from sqlalchemy import text
 import json
 from typing import Optional, List, Dict, Any
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -18,7 +18,7 @@ from app.models.prova import Prova, QuestaoGerada, ProvaAluno, StatusProva, Stat
 
 # Cliente Anthropic
 _client = None
-MODELO_IA = "claude-sonnet-4-20250514"
+MODELO_IA = "claude-3-5-sonnet-20241022"
 
 
 def get_anthropic_client():
@@ -389,7 +389,7 @@ class CalendarioAtividadesService:
                 ]
             },
             gerado=True,
-            data_geracao=datetime.utcnow()
+            data_geracao=datetime.now(timezone.utc)
         )
         self.db.add(sequencia)
         
@@ -737,10 +737,10 @@ Retorne APENAS o JSON."""
         atividade.status = novo_status
         
         if novo_status == StatusAtividade.EM_ANDAMENTO and not atividade.data_inicio:
-            atividade.data_inicio = datetime.utcnow()
+            atividade.data_inicio = datetime.now(timezone.utc)
         
         if novo_status == StatusAtividade.CONCLUIDA:
-            atividade.data_conclusao = datetime.utcnow()
+            atividade.data_conclusao = datetime.now(timezone.utc)
         
         if observacoes:
             atividade.observacoes_professor = observacoes

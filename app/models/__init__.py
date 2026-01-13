@@ -63,6 +63,15 @@ from app.models.atividade_pei import (
     StatusAtividade
 )
 
+# Diário de Aprendizagem
+from app.models.diario_aprendizagem import (
+    DiarioAprendizagem,
+    ConteudoExtraido,
+    ResumoSemanalAprendizagem,
+    HumorEstudo,
+    NivelCompreensao
+)
+
 
 __all__ = [
     # Multi-tenant
@@ -128,4 +137,11 @@ __all__ = [
     "SequenciaObjetivo",
     "TipoAtividade",
     "StatusAtividade",
+    
+    # Diário de Aprendizagem
+    "DiarioAprendizagem",
+    "ConteudoExtraido",
+    "ResumoSemanalAprendizagem",
+    "HumorEstudo",
+    "NivelCompreensao",
 ]

@@ -27,6 +27,7 @@ from app.api.routes import planejamento_bncc  # PLANEJAMENTO BNCC E PEI
 from app.api.routes import calendario_atividades  # CALENDÁRIO DE ATIVIDADES PEI
 from app.api.routes import student_pei  # PEI PARA PORTAL DO ALUNO
 from app.api.routes import diario_aprendizagem  # DIÁRIO DE APRENDIZAGEM COM IA
+from app.api.routes import agenda  # AGENDA DO PROFESSOR
 
 # Criar tabelas
 Base.metadata.create_all(bind=engine)
@@ -129,6 +130,7 @@ app.include_router(planejamento_bncc.router, prefix="/api/v1", tags=["📚 Plane
 app.include_router(calendario_atividades.router, prefix="/api/v1", tags=["📅 Calendário Atividades"])  # CALENDÁRIO PEI
 app.include_router(student_pei.router, prefix="/api/v1/student", tags=["🎯 PEI Estudante"])  # PEI PORTAL ALUNO
 app.include_router(diario_aprendizagem.router, prefix="/api/v1", tags=["📔 Diário de Aprendizagem"])  # DIÁRIO COM IA
+app.include_router(agenda.router, prefix="/api/v1", tags=["📅 Agenda do Professor"])  # AGENDA
 
 # Rotas principais
 @app.get("/", tags=["Root"])

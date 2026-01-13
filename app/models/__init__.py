@@ -72,6 +72,15 @@ from app.models.diario_aprendizagem import (
     NivelCompreensao
 )
 
+# Agenda do Professor
+from app.models.agenda import (
+    AgendaProfessor,
+    LembreteAgenda,
+    TipoEvento,
+    StatusEvento,
+    Recorrencia
+)
+
 
 __all__ = [
     # Multi-tenant
@@ -144,4 +153,11 @@ __all__ = [
     "ResumoSemanalAprendizagem",
     "HumorEstudo",
     "NivelCompreensao",
+    
+    # Agenda do Professor
+    "AgendaProfessor",
+    "LembreteAgenda",
+    "TipoEvento",
+    "StatusEvento",
+    "Recorrencia",
 ]

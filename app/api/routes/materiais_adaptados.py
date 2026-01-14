@@ -1,7 +1,6 @@
 """
 Rotas para Geração de Materiais Adaptados
-ATUALIZADO: Novos tipos (história social, sequenciamento, linha do tempo, jogo da memória)
-ATUALIZADO: Série obtida automaticamente do aluno
+VERSÃO MEGA COMPLETA: 25+ tipos de materiais
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -20,13 +19,69 @@ from app.services.ai_materiais_service import MaterialAdaptadoService
 router = APIRouter(prefix="/materiais-adaptados", tags=["Materiais Adaptados"])
 
 
-# Schema simplificado (sem serie obrigatória)
 class MaterialRequest(BaseModel):
     student_id: int
     disciplina: str
-    serie: Optional[str] = None  # Opcional - pega do aluno se não informada
+    serie: Optional[str] = None
     conteudo: str
     tipos_material: List[str]
+
+
+# Mapeamento de tipos para métodos do service
+TIPOS_MATERIAIS = {
+    # Leitura
+    "texto_niveis": {"metodo": "gerar_texto_3_niveis", "nome": "Texto em 3 Níveis", "categoria": "📚 Leitura", "usa_diagnostico": True},
+    "resumo_estruturado": {"metodo": "gerar_resumo_estruturado", "nome": "Resumo Estruturado", "categoria": "📚 Leitura"},
+    "ficha_leitura": {"metodo": "gerar_ficha_leitura", "nome": "Ficha de Leitura", "categoria": "📚 Leitura"},
+    
+    # Visual
+    "infografico": {"metodo": "gerar_infografico", "nome": "Infográfico", "categoria": "🎨 Visual"},
+    "mapa_mental": {"metodo": "gerar_mapa_mental", "nome": "Mapa Mental", "categoria": "🎨 Visual"},
+    "linha_tempo": {"metodo": "gerar_linha_tempo", "nome": "Linha do Tempo", "categoria": "🎨 Visual"},
+    "hq_tirinha": {"metodo": "gerar_hq_tirinha", "nome": "HQ/Tirinha", "categoria": "🎨 Visual"},
+    "diagrama_venn": {"metodo": "gerar_diagrama_venn", "nome": "Diagrama de Venn", "categoria": "🎨 Visual"},
+    "tabela_comparativa": {"metodo": "gerar_tabela_comparativa", "nome": "Tabela Comparativa", "categoria": "🎨 Visual"},
+    "arvore_decisao": {"metodo": "gerar_arvore_decisao", "nome": "Árvore de Decisão", "categoria": "🎨 Visual"},
+    
+    # Memorização
+    "flashcards": {"metodo": "gerar_flashcards", "nome": "Flashcards", "categoria": "🧠 Memorização"},
+    "jogo_memoria": {"metodo": "gerar_jogo_memoria", "nome": "Jogo da Memória", "categoria": "🧠 Memorização"},
+    "album_figurinhas": {"metodo": "gerar_album_figurinhas", "nome": "Álbum de Figurinhas", "categoria": "🧠 Memorização"},
+    
+    # Jogos
+    "caca_palavras": {"metodo": "gerar_caca_palavras", "nome": "Caça-Palavras", "categoria": "🎮 Jogos"},
+    "cruzadinha": {"metodo": "gerar_cruzadinha", "nome": "Cruzadinha", "categoria": "🎮 Jogos"},
+    "bingo": {"metodo": "gerar_bingo_educativo", "nome": "Bingo Educativo", "categoria": "🎮 Jogos"},
+    "domino": {"metodo": "gerar_domino", "nome": "Dominó Educativo", "categoria": "🎮 Jogos"},
+    "quiz_interativo": {"metodo": "gerar_quiz_interativo", "nome": "Quiz Interativo", "categoria": "🎮 Jogos"},
+    "trilha_aprendizagem": {"metodo": "gerar_trilha_aprendizagem", "nome": "Trilha/Tabuleiro", "categoria": "🎮 Jogos"},
+    "roleta_perguntas": {"metodo": "gerar_roleta_perguntas", "nome": "Roleta de Perguntas", "categoria": "🎮 Jogos"},
+    
+    # TEA/TDAH
+    "historia_social": {"metodo": "gerar_historia_social", "nome": "História Social", "categoria": "💙 TEA/TDAH", "usa_diagnostico": True},
+    "sequenciamento": {"metodo": "gerar_sequenciamento", "nome": "Sequenciamento Visual", "categoria": "💙 TEA/TDAH"},
+    "quadro_rotina": {"metodo": "gerar_quadro_rotina", "nome": "Quadro de Rotina", "categoria": "💙 TEA/TDAH"},
+    "cartoes_comunicacao": {"metodo": "gerar_cartoes_comunicacao", "nome": "Cartões de Comunicação", "categoria": "💙 TEA/TDAH"},
+    "termometro_emocoes": {"metodo": "gerar_termometro_emocoes", "nome": "Termômetro de Emoções", "categoria": "💙 TEA/TDAH"},
+    "contrato_comportamento": {"metodo": "gerar_contrato_comportamento", "nome": "Contrato de Comportamento", "categoria": "💙 TEA/TDAH"},
+    "checklist_tarefas": {"metodo": "gerar_checklist_tarefas", "nome": "Checklist de Tarefas", "categoria": "💙 TEA/TDAH"},
+    "painel_primeiro_depois": {"metodo": "gerar_painel_primeiro_depois", "nome": "Primeiro-Depois", "categoria": "💙 TEA/TDAH"},
+    
+    # Completar
+    "complete_lacunas": {"metodo": "gerar_complete_lacunas", "nome": "Complete as Lacunas", "categoria": "✍️ Completar"},
+    "ligue_colunas": {"metodo": "gerar_ligue_colunas", "nome": "Ligue as Colunas", "categoria": "✍️ Completar"},
+    "verdadeiro_falso": {"metodo": "gerar_verdadeiro_falso", "nome": "Verdadeiro ou Falso", "categoria": "✍️ Completar"},
+    "ordenar_sequencia": {"metodo": "gerar_ordenar_sequencia", "nome": "Ordenar Sequência", "categoria": "✍️ Completar"},
+    
+    # Avaliação
+    "avaliacao": {"metodo": "gerar_avaliacao_multiformato", "nome": "Avaliação 3 Formatos", "categoria": "📝 Avaliação", "usa_diagnostico": True},
+    
+    # Práticos
+    "experimento": {"metodo": "gerar_experimento", "nome": "Experimento", "categoria": "🔬 Práticos"},
+    "receita_procedimento": {"metodo": "gerar_receita_procedimento", "nome": "Receita/Procedimento", "categoria": "🔬 Práticos"},
+    "estudo_caso": {"metodo": "gerar_estudo_caso", "nome": "Estudo de Caso", "categoria": "🔬 Práticos"},
+    "diario_bordo": {"metodo": "gerar_diario_bordo", "nome": "Diário de Bordo", "categoria": "🔬 Práticos"},
+}
 
 
 @router.post("/gerar")
@@ -38,20 +93,7 @@ async def gerar_materiais_adaptados(
     """
     🎨 GERA MATERIAIS EDUCACIONAIS ADAPTADOS
     
-    Tipos disponíveis:
-    - texto_niveis: Texto em 3 níveis de complexidade
-    - infografico: Infográfico visual
-    - flashcards: Cards de estudo
-    - caca_palavras: Busca de termos técnicos
-    - bingo: Bingo educativo
-    - avaliacao: Avaliação em 3 formatos
-    - mapa_mental: Mapa mental/conceitual
-    - historia_social: História social (TEA/TDAH) [NOVO]
-    - sequenciamento: Sequenciamento visual [NOVO]
-    - linha_tempo: Linha do tempo [NOVO]
-    - jogo_memoria: Jogo da memória [NOVO]
-    
-    A série é obtida automaticamente do cadastro do aluno se não informada.
+    25+ tipos disponíveis! A série é obtida automaticamente do aluno.
     """
     
     inicio = time.time()
@@ -61,7 +103,7 @@ async def gerar_materiais_adaptados(
     if not student:
         raise HTTPException(status_code=404, detail="Aluno não encontrado")
     
-    # SÉRIE: Usar do aluno se não informada
+    # Série: usar do aluno se não informada
     serie = request.serie or student.grade_level or "Não especificada"
     
     # Extrair diagnósticos do aluno
@@ -77,7 +119,6 @@ async def gerar_materiais_adaptados(
             "disgrafia": diag.get("disgrafia", False),
             "deficiencia_intelectual": diag.get("deficiencia_intelectual", False),
             "superdotacao": diag.get("superdotacao", False),
-            "outro": diag.get("outro", False),
             "caracteristicas": diag.get("caracteristicas", ""),
             "pontos_fortes": diag.get("pontos_fortes", ""),
             "dificuldades": diag.get("dificuldades", "")
@@ -90,103 +131,47 @@ async def gerar_materiais_adaptados(
     response = {
         "success": True,
         "student_name": student.name,
-        "student_serie": serie,  # Informar série usada
+        "student_serie": serie,
         "disciplina": request.disciplina,
-        "conteudo": request.conteudo
+        "conteudo": request.conteudo,
+        "materiais_gerados": []
     }
     
     # Gerar cada tipo de material solicitado
-    try:
-        # === MATERIAIS ORIGINAIS ===
-        if "texto_niveis" in request.tipos_material:
-            print("🔄 Gerando texto em 3 níveis...")
-            response["texto_niveis"] = service.gerar_texto_3_niveis(
-                request.disciplina, serie, request.conteudo, diagnosticos
-            )
-            print("✅ Texto gerado!")
+    erros = []
+    for tipo in request.tipos_material:
+        if tipo not in TIPOS_MATERIAIS:
+            erros.append(f"Tipo '{tipo}' não encontrado")
+            continue
         
-        if "infografico" in request.tipos_material:
-            print("🔄 Gerando infográfico...")
-            response["infografico"] = service.gerar_infografico(
-                request.disciplina, serie, request.conteudo
-            )
-            print("✅ Infográfico gerado!")
+        config = TIPOS_MATERIAIS[tipo]
+        metodo_nome = config["metodo"]
         
-        if "flashcards" in request.tipos_material:
-            print("🔄 Gerando flashcards...")
-            response["flashcards"] = service.gerar_flashcards(
-                request.disciplina, serie, request.conteudo
-            )
-            print("✅ Flashcards gerados!")
-        
-        if "caca_palavras" in request.tipos_material:
-            print("🔄 Gerando caça-palavras...")
-            response["caca_palavras"] = service.gerar_caca_palavras(
-                request.disciplina, serie, request.conteudo
-            )
-            print("✅ Caça-palavras gerado!")
-        
-        if "bingo" in request.tipos_material:
-            print("🔄 Gerando bingo educativo...")
-            response["bingo"] = service.gerar_bingo_educativo(
-                request.disciplina, serie, request.conteudo
-            )
-            print("✅ Bingo gerado!")
-        
-        if "avaliacao" in request.tipos_material:
-            print("🔄 Gerando avaliação multiformato...")
-            response["avaliacao"] = service.gerar_avaliacao_multiformato(
-                request.disciplina, serie, request.conteudo, diagnosticos
-            )
-            print("✅ Avaliação gerada!")
-        
-        if "mapa_mental" in request.tipos_material:
-            print("🔄 Gerando mapa mental...")
-            response["mapa_mental"] = service.gerar_mapa_mental(
-                request.disciplina, serie, request.conteudo
-            )
-            print("✅ Mapa mental gerado!")
-        
-        # === NOVOS MATERIAIS ===
-        if "historia_social" in request.tipos_material:
-            print("🔄 Gerando história social...")
-            response["historia_social"] = service.gerar_historia_social(
-                request.disciplina, serie, request.conteudo, diagnosticos
-            )
-            print("✅ História social gerada!")
-        
-        if "sequenciamento" in request.tipos_material:
-            print("🔄 Gerando sequenciamento visual...")
-            response["sequenciamento"] = service.gerar_sequenciamento(
-                request.disciplina, serie, request.conteudo
-            )
-            print("✅ Sequenciamento gerado!")
-        
-        if "linha_tempo" in request.tipos_material:
-            print("🔄 Gerando linha do tempo...")
-            response["linha_tempo"] = service.gerar_linha_tempo(
-                request.disciplina, serie, request.conteudo
-            )
-            print("✅ Linha do tempo gerada!")
-        
-        if "jogo_memoria" in request.tipos_material:
-            print("🔄 Gerando jogo da memória...")
-            response["jogo_memoria"] = service.gerar_jogo_memoria(
-                request.disciplina, serie, request.conteudo
-            )
-            print("✅ Jogo da memória gerado!")
-        
-    except Exception as e:
-        print(f"❌ Erro ao gerar materiais: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao gerar materiais: {str(e)}"
-        )
+        try:
+            print(f"🔄 Gerando {config['nome']}...")
+            metodo = getattr(service, metodo_nome)
+            
+            # Chamar método com ou sem diagnósticos
+            if config.get("usa_diagnostico"):
+                resultado = metodo(request.disciplina, serie, request.conteudo, diagnosticos)
+            else:
+                resultado = metodo(request.disciplina, serie, request.conteudo)
+            
+            response[tipo] = resultado
+            response["materiais_gerados"].append(tipo)
+            print(f"✅ {config['nome']} gerado!")
+            
+        except Exception as e:
+            print(f"❌ Erro ao gerar {config['nome']}: {e}")
+            erros.append(f"{config['nome']}: {str(e)}")
+    
+    if erros:
+        response["erros"] = erros
     
     tempo_total = time.time() - inicio
     response["tempo_geracao"] = round(tempo_total, 2)
     
-    # SALVAR NO BANCO DE DADOS
+    # Salvar no banco
     try:
         material_salvo = MaterialAdaptadoGerado(
             student_id=request.student_id,
@@ -201,11 +186,10 @@ async def gerar_materiais_adaptados(
         db.add(material_salvo)
         db.commit()
         db.refresh(material_salvo)
-        
-        print(f"✅ Material salvo no banco! ID: {material_salvo.id}")
         response["material_id"] = material_salvo.id
+        print(f"✅ Material salvo! ID: {material_salvo.id}")
     except Exception as e:
-        print(f"⚠️ Erro ao salvar material no banco: {e}")
+        print(f"⚠️ Erro ao salvar: {e}")
         db.rollback()
     
     return response
@@ -215,103 +199,27 @@ async def gerar_materiais_adaptados(
 async def listar_tipos_materiais(
     current_user: User = Depends(get_current_active_user)
 ):
-    """Lista todos os tipos de materiais disponíveis"""
+    """Lista todos os 25+ tipos de materiais disponíveis por categoria"""
+    
+    # Agrupar por categoria
+    por_categoria = {}
+    for tipo_id, config in TIPOS_MATERIAIS.items():
+        categoria = config["categoria"]
+        if categoria not in por_categoria:
+            por_categoria[categoria] = []
+        
+        por_categoria[categoria].append({
+            "id": tipo_id,
+            "nome": config["nome"],
+            "usa_diagnostico": config.get("usa_diagnostico", False)
+        })
+    
     return {
-        "tipos": [
-            # Originais
-            {
-                "id": "texto_niveis",
-                "nome": "Texto em 3 Níveis",
-                "descricao": "Texto adaptado para diferentes níveis",
-                "icon": "📄",
-                "categoria": "Leitura",
-                "tempo_estimado": "30-60s"
-            },
-            {
-                "id": "infografico",
-                "nome": "Infográfico",
-                "descricao": "Representação visual do conteúdo",
-                "icon": "📊",
-                "categoria": "Visual",
-                "tempo_estimado": "20-40s"
-            },
-            {
-                "id": "flashcards",
-                "nome": "Flashcards",
-                "descricao": "Cards de estudo",
-                "icon": "💳",
-                "categoria": "Memorização",
-                "tempo_estimado": "20-40s"
-            },
-            {
-                "id": "mapa_mental",
-                "nome": "Mapa Mental",
-                "descricao": "Diagrama conceitual",
-                "icon": "🧠",
-                "categoria": "Visual",
-                "tempo_estimado": "20-40s"
-            },
-            {
-                "id": "caca_palavras",
-                "nome": "Busca de Termos",
-                "descricao": "Caça-palavras técnico",
-                "icon": "🎯",
-                "categoria": "Jogos",
-                "tempo_estimado": "30-50s"
-            },
-            {
-                "id": "bingo",
-                "nome": "Bingo Educativo",
-                "descricao": "Jogo de bingo temático",
-                "icon": "🎮",
-                "categoria": "Jogos",
-                "tempo_estimado": "30-50s"
-            },
-            {
-                "id": "jogo_memoria",
-                "nome": "Jogo da Memória",
-                "descricao": "Pares de cartas com conceitos",
-                "icon": "🃏",
-                "categoria": "Jogos",
-                "tempo_estimado": "20-40s",
-                "novo": True
-            },
-            {
-                "id": "avaliacao",
-                "nome": "Avaliação Adaptada",
-                "descricao": "Prova em 3 formatos",
-                "icon": "📝",
-                "categoria": "Avaliação",
-                "tempo_estimado": "40-70s"
-            },
-            # Novos
-            {
-                "id": "historia_social",
-                "nome": "História Social",
-                "descricao": "Narrativa para comportamentos (TEA/TDAH)",
-                "icon": "📖",
-                "categoria": "TEA/TDAH",
-                "tempo_estimado": "20-40s",
-                "novo": True
-            },
-            {
-                "id": "sequenciamento",
-                "nome": "Sequenciamento Visual",
-                "descricao": "Passo a passo de tarefas",
-                "icon": "📋",
-                "categoria": "TEA/TDAH",
-                "tempo_estimado": "20-40s",
-                "novo": True
-            },
-            {
-                "id": "linha_tempo",
-                "nome": "Linha do Tempo",
-                "descricao": "Eventos em ordem cronológica",
-                "icon": "📅",
-                "categoria": "Visual",
-                "tempo_estimado": "20-40s",
-                "novo": True
-            }
+        "total_tipos": len(TIPOS_MATERIAIS),
+        "por_categoria": por_categoria,
+        "lista_completa": [
+            {"id": k, "nome": v["nome"], "categoria": v["categoria"]}
+            for k, v in TIPOS_MATERIAIS.items()
         ]
     }
 
@@ -333,13 +241,10 @@ async def listar_historico_student(
     materiais = db.query(MaterialAdaptadoGerado)\
         .filter(MaterialAdaptadoGerado.student_id == student_id)\
         .order_by(MaterialAdaptadoGerado.created_at.desc())\
-        .limit(limit)\
-        .offset(offset)\
-        .all()
+        .limit(limit).offset(offset).all()
     
     total = db.query(MaterialAdaptadoGerado)\
-        .filter(MaterialAdaptadoGerado.student_id == student_id)\
-        .count()
+        .filter(MaterialAdaptadoGerado.student_id == student_id).count()
     
     return {
         "total": total,
@@ -351,8 +256,7 @@ async def listar_historico_student(
                 "conteudo": m.conteudo,
                 "tipos_material": m.tipos_material,
                 "tempo_geracao": m.tempo_geracao,
-                "created_at": m.created_at.isoformat() if m.created_at else None,
-                "created_by": m.created_by
+                "created_at": m.created_at.isoformat() if m.created_at else None
             }
             for m in materiais
         ]
@@ -368,8 +272,7 @@ async def buscar_material_por_id(
     """🔍 Busca material específico por ID"""
     
     material = db.query(MaterialAdaptadoGerado)\
-        .filter(MaterialAdaptadoGerado.id == material_id)\
-        .first()
+        .filter(MaterialAdaptadoGerado.id == material_id).first()
     
     if not material:
         raise HTTPException(status_code=404, detail="Material não encontrado")
@@ -384,8 +287,7 @@ async def buscar_material_por_id(
         "tipos_material": material.tipos_material,
         "resultado": material.resultado_json,
         "tempo_geracao": material.tempo_geracao,
-        "created_at": material.created_at.isoformat() if material.created_at else None,
-        "created_by": material.created_by
+        "created_at": material.created_at.isoformat() if material.created_at else None
     }
 
 
@@ -398,8 +300,7 @@ async def deletar_material(
     """🗑️ Deleta material do histórico"""
     
     material = db.query(MaterialAdaptadoGerado)\
-        .filter(MaterialAdaptadoGerado.id == material_id)\
-        .first()
+        .filter(MaterialAdaptadoGerado.id == material_id).first()
     
     if not material:
         raise HTTPException(status_code=404, detail="Material não encontrado")
@@ -408,42 +309,3 @@ async def deletar_material(
     db.commit()
     
     return {"message": "Material deletado com sucesso"}
-
-
-@router.get("/stats/student/{student_id}")
-async def estatisticas_student(
-    student_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user)
-):
-    """📊 Estatísticas de materiais gerados para um aluno"""
-    from sqlalchemy import func
-    
-    total = db.query(func.count(MaterialAdaptadoGerado.id))\
-        .filter(MaterialAdaptadoGerado.student_id == student_id)\
-        .scalar()
-    
-    por_disciplina = db.query(
-        MaterialAdaptadoGerado.disciplina,
-        func.count(MaterialAdaptadoGerado.id).label('total')
-    ).filter(MaterialAdaptadoGerado.student_id == student_id)\
-     .group_by(MaterialAdaptadoGerado.disciplina)\
-     .all()
-    
-    materiais = db.query(MaterialAdaptadoGerado)\
-        .filter(MaterialAdaptadoGerado.student_id == student_id)\
-        .all()
-    
-    tipos_count = {}
-    for m in materiais:
-        for tipo in (m.tipos_material or []):
-            tipos_count[tipo] = tipos_count.get(tipo, 0) + 1
-    
-    return {
-        "total_materiais": total,
-        "por_disciplina": {d: t for d, t in por_disciplina},
-        "tipos_mais_gerados": tipos_count,
-        "tempo_medio_geracao": db.query(func.avg(MaterialAdaptadoGerado.tempo_geracao))\
-            .filter(MaterialAdaptadoGerado.student_id == student_id)\
-            .scalar() or 0
-    }

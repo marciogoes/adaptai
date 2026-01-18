@@ -188,7 +188,11 @@ class ProvaAlunoUpdate(BaseModel):
 # ============= SCHEMAS ESPECIAIS =============
 
 class GerarProvaRequest(BaseModel):
-    """Schema para solicitar geração de prova pela IA"""
+    """
+    Schema para solicitar geração de prova pela IA
+    
+    NOVO: Aceita aluno_ids e adaptacoes para criar prova contextualizada
+    """
     titulo: str = Field(..., min_length=3, description="Título da prova")
     descricao: Optional[str] = None
     conteudo_prompt: str = Field(..., min_length=20, description="Descrição do conteúdo para gerar questões")
@@ -200,6 +204,10 @@ class GerarProvaRequest(BaseModel):
     tempo_limite_minutos: Optional[int] = None
     pontuacao_total: float = Field(10.0, ge=0)
     nota_minima_aprovacao: float = Field(6.0, ge=0, le=10)
+    # NOVO: IDs dos alunos para associar automaticamente
+    aluno_ids: Optional[List[int]] = Field(default=None, description="IDs dos alunos para associar à prova")
+    # NOVO: Adaptações necessárias (TEA, TDAH, etc.)
+    adaptacoes: Optional[List[str]] = Field(default=None, description="Diagnósticos/adaptações dos alunos")
 
 
 class IniciarProvaRequest(BaseModel):

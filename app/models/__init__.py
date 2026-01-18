@@ -87,6 +87,13 @@ from app.models.registro_diario import (
     AulaRegistrada
 )
 
+# Redações ENEM
+from app.models.redacao import (
+    TemaRedacao,
+    RedacaoAluno,
+    StatusRedacao
+)
+
 
 __all__ = [
     # Multi-tenant
@@ -170,4 +177,9 @@ __all__ = [
     # Registro Diário de Aulas
     "RegistroDiario",
     "AulaRegistrada",
+    
+    # Redações ENEM
+    "TemaRedacao",
+    "RedacaoAluno",
+    "StatusRedacao",
 ]

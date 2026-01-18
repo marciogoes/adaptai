@@ -3,7 +3,7 @@ Schemas para Materiais
 """
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, date, time
 from enum import Enum
 
 
@@ -31,6 +31,10 @@ class MaterialCreate(BaseModel):
     tags: Optional[List[str]] = []
     aluno_ids: List[int] = Field(..., min_items=1)
     adaptacoes: Optional[List[str]] = None
+    # NOVO: Campos para agendar aplicação
+    data_aplicacao: Optional[date] = None
+    hora_aplicacao: Optional[time] = Field(default=None, description="Hora da aplicação")
+    criar_evento_agenda: bool = Field(default=False, description="Se True, cria evento na agenda automaticamente")
 
 
 class MaterialResponse(BaseModel):

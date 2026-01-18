@@ -39,6 +39,7 @@ class User(Base):
     applications = relationship("Application", back_populates="applied_by")
     provas_criadas = relationship("Prova", back_populates="criado_por")
     materiais_criados = relationship("Material", back_populates="criado_por")
+    temas_redacao_criados = relationship("TemaRedacao", back_populates="criado_por")
     
     @property
     def is_super_admin(self) -> bool:

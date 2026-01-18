@@ -1,74 +1,89 @@
+"""
+📋 Listar Todos os Usuários - AdaptAI
+"""
 import sys
 import os
+from urllib.parse import quote_plus
 
-# Adicionar o diretório raiz ao path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# IMPORTAR TODOS OS MODELOS para SQLAlchemy resolver relacionamentos
-from app.database import SessionLocal
-from app.models.user import User
-from app.models.student import Student
-from app.models.question import QuestionSet, Question
-from app.models.application import Application
-from app.models.performance import PerformanceAnalysis
-from app.models.material import Material, MaterialAluno
-from app.models.prova import Prova, QuestaoGerada, ProvaAluno, RespostaAluno, StatusProvaAluno
-from app.models.analise_qualitativa import AnaliseQualitativa
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
 
-def listar_usuarios():
+load_dotenv()
+
+# Configuração do banco
+MYSQL_HOST = os.getenv("MYSQL_HOST")
+MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
+MYSQL_USER = os.getenv("MYSQL_USER")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
+
+MYSQL_PASSWORD_ESCAPED = quote_plus(MYSQL_PASSWORD) if MYSQL_PASSWORD else ""
+DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD_ESCAPED}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
+
+print()
+print("=" * 80)
+print("📋 LISTANDO TODOS OS USUÁRIOS DO ADAPTAI")
+print("=" * 80)
+print()
+
+try:
+    engine = create_engine(DATABASE_URL, echo=False)
+    SessionLocal = sessionmaker(bind=engine)
     db = SessionLocal()
     
-    try:
-        print("=" * 60)
-        print("USUÁRIOS NO SISTEMA")
-        print("=" * 60)
+    # Lista todos os usuários
+    result = db.execute(text("""
+        SELECT id, name, email, role, is_active, created_at 
+        FROM users 
+        ORDER BY role, name
+    """))
+    
+    usuarios = result.fetchall()
+    
+    if not usuarios:
+        print("❌ Nenhum usuário encontrado no banco de dados!")
+    else:
+        print(f"Total de usuários: {len(usuarios)}")
         print()
+        print("┌─────┬────────────────────────────────┬────────────────────────────────────┬──────────────┬────────┐")
+        print("│ ID  │ NOME                           │ EMAIL                              │ PERFIL       │ ATIVO  │")
+        print("├─────┼────────────────────────────────┼────────────────────────────────────┼──────────────┼────────┤")
         
-        # Listar Users
-        users = db.query(User).all()
+        for user in usuarios:
+            id_str = str(user[0]).ljust(3)
+            nome = (user[1] or "")[:30].ljust(30)
+            email = (user[2] or "")[:34].ljust(34)
+            role = (user[3] or "").upper()[:12].ljust(12)
+            ativo = "✅ Sim" if user[4] else "❌ Não"
+            ativo = ativo.ljust(6)
+            print(f"│ {id_str} │ {nome} │ {email} │ {role} │ {ativo} │")
         
-        if not users:
-            print("❌ Nenhum usuário encontrado!")
-        else:
-            print(f"Total de usuários: {len(users)}")
-            print()
-            for user in users:
-                print(f"ID: {user.id}")
-                print(f"Nome: {user.name}")
-                print(f"Email: {user.email}")
-                print(f"Role: {user.role}")
-                print(f"Ativo: {user.is_active}")
-                print("-" * 60)
+        print("└─────┴────────────────────────────────┴────────────────────────────────────┴──────────────┴────────┘")
         
+        # Resumo por perfil
         print()
-        print("=" * 60)
-        print("ESTUDANTES NO SISTEMA")
-        print("=" * 60)
-        print()
+        print("📊 RESUMO POR PERFIL:")
+        print("-" * 40)
         
-        # Listar Students
-        students = db.query(Student).all()
+        result_resumo = db.execute(text("""
+            SELECT role, COUNT(*) as total 
+            FROM users 
+            GROUP BY role 
+            ORDER BY total DESC
+        """))
         
-        if not students:
-            print("❌ Nenhum estudante encontrado!")
-        else:
-            print(f"Total de estudantes: {len(students)}")
-            print()
-            for student in students:
-                print(f"ID: {student.id}")
-                print(f"Nome: {student.name}")
-                print(f"Email: {student.email}")
-                print(f"Série: {student.grade_level}")
-                print(f"Criado por (user_id): {student.created_by_user_id}")
-                print(f"Ativo: {student.is_active}")
-                print("-" * 60)
-        
-    except Exception as e:
-        print(f"❌ ERRO: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        db.close()
+        for row in result_resumo.fetchall():
+            print(f"   • {row[0].upper()}: {row[1]} usuário(s)")
+    
+    db.close()
+    
+except Exception as e:
+    print(f"❌ Erro: {str(e)}")
+    import traceback
+    traceback.print_exc()
 
-if __name__ == "__main__":
-    listar_usuarios()
+print()
+print("=" * 80)

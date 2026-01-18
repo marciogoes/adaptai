@@ -1,6 +1,8 @@
 """
 🎓 AdaptAI - Rotas de Prova
 Endpoints para gerenciamento de provas com IA
+
+ATUALIZADO: Aceita aluno_ids e adaptacoes para criar provas contextualizadas
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
@@ -55,6 +57,11 @@ async def gerar_prova_com_ia(
     1. Admin define o tema/conteudo e configuracoes
     2. IA (Claude) gera automaticamente as questoes
     3. Prova e salva no banco de dados
+    4. (NOVO) Se aluno_ids fornecidos, associa automaticamente
+    
+    **Parâmetros novos:**
+    - aluno_ids: Lista de IDs de alunos para associar à prova
+    - adaptacoes: Lista de diagnósticos para adaptar questões (TEA, TDAH, etc.)
     
     **Requer:** Autenticacao de admin/professor
     """
@@ -65,9 +72,31 @@ async def gerar_prova_com_ia(
     
     try:
         # PASSO 1: Gera questoes com IA (SEM conexao com banco)
+        # Inclui adaptações se houver alunos neurodivergentes
         print(f"[GERANDO] {request.quantidade_questoes} questoes com IA...")
+        
+        # Prepara prompt com adaptações se necessário
+        conteudo_com_adaptacoes = request.conteudo_prompt
+        if request.adaptacoes and len(request.adaptacoes) > 0:
+            adaptacoes_str = ", ".join(request.adaptacoes)
+            conteudo_com_adaptacoes = f"""
+{request.conteudo_prompt}
+
+IMPORTANTE - ADAPTAÇÕES NECESSÁRIAS:
+Os alunos possuem os seguintes diagnósticos: {adaptacoes_str}
+
+Por favor, adapte as questões considerando:
+- Enunciados claros e objetivos
+- Evitar duplas negações
+- Usar linguagem simples e direta
+- Para alunos com TEA: evitar metáforas e expressões figurativas
+- Para alunos com TDAH: questões mais curtas e focadas
+- Para alunos com dislexia: fonte clara, espaçamento adequado
+"""
+            print(f"[INFO] Aplicando adaptações para: {adaptacoes_str}")
+        
         questoes_geradas = await prova_ai_service.gerar_questoes(
-            conteudo_prompt=request.conteudo_prompt,
+            conteudo_prompt=conteudo_com_adaptacoes,
             materia=request.materia,
             serie_nivel=request.serie_nivel or "Nao especificado",
             quantidade=request.quantidade_questoes,
@@ -117,6 +146,30 @@ async def gerar_prova_com_ia(
                     tags=questao_data.get("tags", [])
                 )
                 db.add(questao)
+            
+            # PASSO 3 (NOVO): Associar alunos automaticamente se fornecidos
+            if request.aluno_ids and len(request.aluno_ids) > 0:
+                print(f"[ASSOCIANDO] Prova a {len(request.aluno_ids)} aluno(s)...")
+                
+                for aluno_id in request.aluno_ids:
+                    # Verifica se aluno existe
+                    aluno = db.query(Student).filter(Student.id == aluno_id).first()
+                    if aluno:
+                        # Verifica se já não está associado
+                        ja_associado = db.query(ProvaAluno).filter(
+                            ProvaAluno.prova_id == nova_prova.id,
+                            ProvaAluno.aluno_id == aluno_id
+                        ).first()
+                        
+                        if not ja_associado:
+                            prova_aluno = ProvaAluno(
+                                prova_id=nova_prova.id,
+                                aluno_id=aluno_id,
+                                status=StatusProvaAluno.PENDENTE,
+                                pontuacao_maxima=request.pontuacao_total
+                            )
+                            db.add(prova_aluno)
+                            print(f"   ✓ Associado ao aluno: {aluno.name}")
             
             db.commit()
             

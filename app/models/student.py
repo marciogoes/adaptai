@@ -55,3 +55,4 @@ class Student(Base):
     materiais_adaptados_gerados = relationship("MaterialAdaptadoGerado", back_populates="student", cascade="all, delete-orphan")
     relatorios = relationship("Relatorio", back_populates="student", cascade="all, delete-orphan")
     diarios_aprendizagem = relationship("DiarioAprendizagem", back_populates="student", cascade="all, delete-orphan")
+    redacoes = relationship("RedacaoAluno", back_populates="aluno", cascade="all, delete-orphan")

@@ -1,16 +1,18 @@
 """
-Rotas para Materiais de Estudo - COM STORAGE
+Rotas para Materiais de Estudo - COM STORAGE E AGENDA
 """
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError
 from typing import List
+from datetime import time as dt_time
 import time
 
 from app.database import get_db, SessionLocal
 from app.models.user import User
 from app.models.student import Student
 from app.models.material import Material, MaterialAluno, TipoMaterial, StatusMaterial
+from app.models.agenda import AgendaProfessor, TipoEvento, StatusEvento, Recorrencia
 from app.schemas.material import (
     MaterialCreate, MaterialResponse, MaterialListResponse,
     MaterialAlunoResponse, AnotacaoRequest, FavoritoRequest
@@ -173,10 +175,10 @@ async def criar_material(
     db: Session = Depends(get_db)
 ):
     """
-    Cria um novo material de estudo e inicia geração em background
+    Cria um novo material de estudo e inicia geração em background.
     
-    O material é criado com status GERANDO e o conteúdo é gerado
-    pela IA em background e salvo em arquivo. Status muda para DISPONIVEL ao concluir.
+    Se data_aplicacao for fornecida e criar_evento_agenda=True,
+    um evento será criado automaticamente na agenda do professor.
     """
     
     # Verificar se alunos pertencem ao usuário
@@ -218,6 +220,37 @@ async def criar_material(
     
     db.commit()
     db.refresh(novo_material)
+    
+    # ============================================
+    # NOVO: Criar evento na agenda se solicitado
+    # ============================================
+    if material_data.criar_evento_agenda and material_data.data_aplicacao:
+        try:
+            # Para cada aluno, criar evento na agenda
+            hora_inicio = material_data.hora_aplicacao or dt_time(8, 0)  # Default 08:00
+            
+            for aluno in alunos:
+                evento = AgendaProfessor(
+                    professor_id=current_user.id,
+                    titulo=f"📚 {material_data.titulo}",
+                    descricao=f"Aplicação de material: {material_data.titulo}\nMatéria: {material_data.materia}",
+                    tipo=TipoEvento.AULA,
+                    student_id=aluno.id,
+                    data=material_data.data_aplicacao,
+                    hora_inicio=hora_inicio,
+                    duracao_minutos=50,
+                    cor="#10B981",  # Verde para materiais
+                    recorrencia=Recorrencia.UNICO,
+                    status=StatusEvento.AGENDADO,
+                    notas_privadas=f"Material ID: {novo_material.id}"
+                )
+                db.add(evento)
+            
+            db.commit()
+            print(f"📅 Evento(s) criado(s) na agenda para {len(alunos)} aluno(s)")
+        except Exception as e:
+            print(f"⚠️ Erro ao criar evento na agenda: {e}")
+            # Não falha a criação do material se erro na agenda
     
     # Agendar geração em background
     background_tasks.add_task(gerar_material_background, novo_material.id)

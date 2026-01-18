@@ -1,6 +1,7 @@
 # ============================================
 # SERVICE - Planejamento Curricular BNCC
 # ============================================
+# Versão com suporte a processamento em background
 
 import json
 from typing import Optional, List, Dict, Any
@@ -16,7 +17,7 @@ from app.models.relatorio import Relatorio
 
 # Cliente Anthropic (inicialização lazy)
 _client = None
-MODELO_IA = "claude-3-5-sonnet-20241022"
+MODELO_IA = "claude-sonnet-4-20250514"
 
 
 def get_anthropic_client():
@@ -137,22 +138,33 @@ class PlanejamentoBNNCService:
         student_id: int,
         ano_letivo: str,
         componentes: List[str],
-        user_id: int
+        user_id: int,
+        task_id: str = None,
+        task_manager = None
     ) -> Dict[str, Any]:
         """
         Gera planejamento anual completo para um aluno
+        Suporta atualização de progresso em tempo real
         """
+        def update_progress(progress: int, message: str):
+            if task_manager and task_id:
+                task_manager.update_task(task_id, progress=progress, message=message)
+        
         if not self.client:
-            raise Exception("Serviço de IA não disponível")
+            raise Exception("Serviço de IA não disponível. Verifique a configuração da API key.")
+        
+        update_progress(5, "Carregando perfil do aluno...")
         
         # Obter perfil do aluno
         perfil = self.obter_perfil_aluno(student_id)
         if not perfil:
             raise Exception("Aluno não encontrado")
         
+        update_progress(15, f"Buscando habilidades BNCC para {len(componentes)} componentes...")
+        
         # Buscar habilidades da BNCC para o ano escolar
         habilidades_bncc = {}
-        for componente in componentes:
+        for i, componente in enumerate(componentes):
             habs = self.buscar_habilidades_bncc(
                 ano_escolar=perfil["ano_escolar"],
                 componente=componente
@@ -167,9 +179,15 @@ class PlanejamentoBNNCService:
                 }
                 for h in habs
             ]
+            progress = 15 + int((i + 1) / len(componentes) * 15)
+            update_progress(progress, f"Habilidades de {componente} carregadas...")
+        
+        update_progress(35, "Preparando prompt para IA...")
         
         # Preparar prompt para a IA
         prompt = self._criar_prompt_planejamento(perfil, habilidades_bncc, ano_letivo)
+        
+        update_progress(40, "Gerando planejamento com IA (isso pode levar até 2 minutos)...")
         
         # Chamar a IA
         try:
@@ -179,11 +197,22 @@ class PlanejamentoBNNCService:
                 messages=[{"role": "user", "content": prompt}]
             )
             
+            update_progress(85, "Processando resposta da IA...")
+            
             response_text = message.content[0].text.strip()
             
             # Limpar e parsear resposta
             response_text = self._limpar_json(response_text)
+            
+            update_progress(90, "Validando planejamento gerado...")
+            
             planejamento = json.loads(response_text)
+            
+            # Validar estrutura
+            if "objetivos" not in planejamento or len(planejamento.get("objetivos", [])) == 0:
+                raise Exception("Planejamento gerado sem objetivos")
+            
+            update_progress(95, "Finalizando...")
             
             return {
                 "success": True,
@@ -195,7 +224,7 @@ class PlanejamentoBNNCService:
             return {
                 "success": False,
                 "error": f"Erro ao processar resposta da IA: {str(e)}",
-                "raw_response": response_text
+                "raw_response": response_text[:1000] if response_text else None
             }
         except Exception as e:
             return {
@@ -208,17 +237,27 @@ class PlanejamentoBNNCService:
         student_id: int,
         componente: str,
         trimestre: int,
-        ano_letivo: str
+        ano_letivo: str,
+        task_id: str = None,
+        task_manager = None
     ) -> Dict[str, Any]:
         """
         Gera objetivos específicos para um trimestre
         """
+        def update_progress(progress: int, message: str):
+            if task_manager and task_id:
+                task_manager.update_task(task_id, progress=progress, message=message)
+        
         if not self.client:
             raise Exception("Serviço de IA não disponível")
+        
+        update_progress(10, "Carregando perfil do aluno...")
         
         perfil = self.obter_perfil_aluno(student_id)
         if not perfil:
             raise Exception("Aluno não encontrado")
+        
+        update_progress(30, f"Buscando habilidades de {componente}...")
         
         # Buscar habilidades do trimestre
         habilidades = self.buscar_habilidades_bncc(
@@ -245,6 +284,8 @@ class PlanejamentoBNNCService:
             for h in habilidades
         ]
         
+        update_progress(50, "Gerando objetivos com IA...")
+        
         prompt = self._criar_prompt_objetivos_trimestre(
             perfil, componente, trimestre, habilidades_list, ano_letivo
         )
@@ -256,8 +297,12 @@ class PlanejamentoBNNCService:
                 messages=[{"role": "user", "content": prompt}]
             )
             
+            update_progress(85, "Processando resposta...")
+            
             response_text = self._limpar_json(message.content[0].text.strip())
             objetivos = json.loads(response_text)
+            
+            update_progress(95, "Finalizando...")
             
             return {
                 "success": True,
@@ -443,15 +488,14 @@ Com base no perfil do aluno e nas habilidades da BNCC, gere um planejamento anua
 }}
 
 IMPORTANTE - REGRAS OBRIGATÓRIAS:
-- Gere PELO MENOS 3-4 objetivos por componente curricular (total mínimo: 28-32 objetivos)
-- OBRIGATÓRIO: Distribua equilibradamente pelos 4 TRIMESTRES (7-8 objetivos por trimestre)
-- OBRIGATÓRIO: O 4º TRIMESTRE DEVE TER objetivos! Não ignore o trimestre 4.
-- Distribuição esperada: Trimestre 1 (7-8), Trimestre 2 (7-8), Trimestre 3 (7-8), Trimestre 4 (7-8)
+- Gere PELO MENOS 3-4 objetivos por componente curricular (total mínimo: 12-16 objetivos)
+- OBRIGATÓRIO: Distribua equilibradamente pelos 4 TRIMESTRES
+- OBRIGATÓRIO: O 4º TRIMESTRE DEVE TER objetivos!
+- Distribuição esperada: ~3-4 objetivos por trimestre
 - Cada objetivo deve ser realmente ADAPTADO ao perfil (não apenas copiar a habilidade BNCC)
 - Use linguagem clara e prática
 - Considere o estilo de aprendizagem do aluno
 - Aproveite os pontos fortes como alavanca
-- Inclua objetivos de TODAS as áreas: matemática, português, ciências/biologia/física/química, história, geografia, socioemocional
 - Retorne APENAS o JSON, sem explicações adicionais
 - VERIFICAÇÃO FINAL: Certifique-se que há objetivos com "trimestre": 4 no array de objetivos!"""
 

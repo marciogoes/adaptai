@@ -1,11 +1,13 @@
 # ============================================
 # ROUTER - Planejamento BNCC e PEI
 # ============================================
+# Versão com suporte a processamento em background
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional, List
 import json
+import asyncio
 from datetime import datetime
 
 from app.database import get_db
@@ -15,6 +17,8 @@ from app.models.student import Student
 from app.models.curriculo import CurriculoNacional, MapeamentoPrerequisitos
 from app.models.pei import PEI, PEIObjetivo, PEIProgressLog, PEIAjuste
 from app.services.planejamento_bncc_service import PlanejamentoBNNCService
+from app.services.planejamento_bncc_completo_service import PlanejamentoBNNCCompletoService
+from app.services.background_tasks import get_task_manager, TaskStatus
 from app.schemas.curriculo import (
     CurriculoNacionalCreate,
     CurriculoNacionalResponse,
@@ -42,11 +46,84 @@ router = APIRouter(prefix="/planejamento", tags=["Planejamento BNCC e PEI"])
 
 
 # ============================================
+# ENDPOINTS - Background Tasks (Processamento Assíncrono)
+# ============================================
+
+@router.post("/gerar-planejamento-anual/async")
+async def iniciar_geracao_planejamento(
+    request: GerarPlanejamentoRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Inicia a geração de planejamento em background.
+    Retorna imediatamente com um task_id para acompanhar o progresso.
+    """
+    # Verificar se o aluno existe
+    student = db.query(Student).filter(Student.id == request.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    
+    # Criar tarefa
+    task_manager = get_task_manager()
+    task_id = task_manager.create_task()
+    
+    # Função que será executada em background
+    async def executar_geracao():
+        # Criar nova sessão para a tarefa em background
+        from app.database import SessionLocal
+        db_bg = SessionLocal()
+        try:
+            service = PlanejamentoBNNCService(db_bg)
+            resultado = await service.gerar_planejamento_anual(
+                student_id=request.student_id,
+                ano_letivo=request.ano_letivo,
+                componentes=request.componentes,
+                user_id=current_user.id,
+                task_id=task_id,
+                task_manager=task_manager
+            )
+            return resultado
+        finally:
+            db_bg.close()
+    
+    # Executar em background
+    asyncio.create_task(
+        task_manager.run_task(task_id, executar_geracao)
+    )
+    
+    return {
+        "task_id": task_id,
+        "message": "Geração de planejamento iniciada. Use o endpoint /planejamento/task/{task_id} para acompanhar.",
+        "status": "pending"
+    }
+
+
+@router.get("/task/{task_id}")
+async def verificar_status_tarefa(
+    task_id: str,
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Verifica o status de uma tarefa em background.
+    Retorna progresso, mensagem e resultado quando completo.
+    """
+    task_manager = get_task_manager()
+    task = task_manager.get_task(task_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarefa não encontrada")
+    
+    return task.to_dict()
+
+
+# ============================================
 # ENDPOINTS - Listar PEIs do Aluno
 # ============================================
 
 @router.get("/peis/aluno/{student_id}")
-async def listar_peis_aluno(
+async def listar_peis_aluno_v2(
     student_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -163,7 +240,13 @@ async def listar_componentes(
 ):
     """Lista todos os componentes curriculares disponíveis"""
     result = db.query(CurriculoNacional.componente).distinct().all()
-    return [r[0] for r in result if r[0]]
+    componentes = [r[0] for r in result if r[0]]
+    
+    # Se não houver componentes no banco, retornar padrão
+    if not componentes:
+        return ["Matemática", "Língua Portuguesa", "Ciências", "História", "Geografia"]
+    
+    return componentes
 
 
 @router.get("/bncc/anos", response_model=List[str])
@@ -274,7 +357,7 @@ async def importar_habilidades_bncc(
 
 
 # ============================================
-# ENDPOINTS - Geração de Planejamento IA
+# ENDPOINTS - Geração de Planejamento IA (Síncrono)
 # ============================================
 
 @router.post("/gerar-planejamento-anual", response_model=PlanejamentoResponse)
@@ -286,6 +369,9 @@ async def gerar_planejamento_anual(
     """
     Gera um planejamento anual completo baseado na BNCC adaptado ao perfil do aluno.
     Usa IA para criar objetivos personalizados considerando laudos e diagnósticos.
+    
+    ATENÇÃO: Esta operação pode demorar até 2 minutos.
+    Para acompanhar o progresso, use o endpoint /gerar-planejamento-anual/async
     """
     # Verificar se o aluno existe
     student = db.query(Student).filter(Student.id == request.student_id).first()
@@ -367,6 +453,182 @@ async def salvar_planejamento_como_pei(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/planejamento-completo/jobs/{student_id}")
+async def listar_jobs_aluno(
+    student_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Lista todos os jobs de planejamento de um aluno.
+    Útil para verificar histórico e encontrar jobs para retomar.
+    """
+    from app.models.planejamento_job import PlanejamentoJob
+    
+    jobs = db.query(PlanejamentoJob).filter(
+        PlanejamentoJob.student_id == student_id
+    ).order_by(PlanejamentoJob.created_at.desc()).all()
+    
+    return {
+        "total": len(jobs),
+        "jobs": [job.to_dict() for job in jobs]
+    }
+
+
+@router.get("/planejamento-completo/job/{task_id}")
+async def obter_job_detalhado(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Obtém detalhes completos de um job, incluindo logs.
+    """
+    from app.models.planejamento_job import PlanejamentoJob, PlanejamentoJobLog
+    
+    job = db.query(PlanejamentoJob).filter(
+        PlanejamentoJob.task_id == task_id
+    ).first()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job não encontrado")
+    
+    # Buscar logs
+    logs = db.query(PlanejamentoJobLog).filter(
+        PlanejamentoJobLog.job_id == job.id
+    ).order_by(PlanejamentoJobLog.created_at.desc()).limit(50).all()
+    
+    # Parsear resultados parciais
+    resultados = job.resultados_parciais
+    if isinstance(resultados, str):
+        try:
+            resultados = json.loads(resultados)
+        except:
+            resultados = {}
+    
+    return {
+        "job": job.to_dict(),
+        "resultados_parciais": {
+            comp: {
+                "total_objetivos": len(dados.get("objetivos", [])),
+                "processado_em": dados.get("processado_em")
+            }
+            for comp, dados in (resultados or {}).items()
+        },
+        "logs": [
+            {
+                "evento": log.evento,
+                "componente": log.componente,
+                "lote": log.lote,
+                "mensagem": log.mensagem,
+                "created_at": log.created_at.isoformat() if log.created_at else None
+            }
+            for log in logs
+        ]
+    }
+
+
+@router.post("/planejamento-completo/retomar/{task_id}")
+async def retomar_job(
+    task_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Retoma um job interrompido de onde parou.
+    Usa os resultados parciais já salvos.
+    """
+    from app.models.planejamento_job import PlanejamentoJob, JobStatus
+    
+    job = db.query(PlanejamentoJob).filter(
+        PlanejamentoJob.task_id == task_id
+    ).first()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job não encontrado")
+    
+    if job.status == JobStatus.COMPLETED.value:
+        raise HTTPException(status_code=400, detail="Job já foi concluído")
+    
+    if job.status == JobStatus.PROCESSING.value:
+        raise HTTPException(status_code=400, detail="Job já está em processamento")
+    
+    # Criar nova tarefa
+    task_manager = get_task_manager()
+    new_task_id = task_manager.create_task()
+    
+    async def executar_retomada():
+        from app.database import SessionLocal
+        db_bg = SessionLocal()
+        try:
+            service = PlanejamentoBNNCCompletoService(db_bg)
+            
+            # Recarregar job na nova sessão
+            job_bg = db_bg.query(PlanejamentoJob).filter(
+                PlanejamentoJob.id == job.id
+            ).first()
+            
+            resultado = await service.gerar_planejamento_completo(
+                student_id=job_bg.student_id,
+                ano_letivo=job_bg.ano_letivo,
+                componentes=job_bg.componentes_solicitados,
+                user_id=job_bg.user_id,
+                task_id=new_task_id,
+                task_manager=task_manager,
+                retomar_job=True
+            )
+            return resultado
+        finally:
+            db_bg.close()
+    
+    asyncio.create_task(
+        task_manager.run_task(new_task_id, executar_retomada)
+    )
+    
+    return {
+        "task_id": new_task_id,
+        "job_original": task_id,
+        "message": "Retomada iniciada. Use /planejamento/task/{task_id} para acompanhar.",
+        "status": "pending",
+        "componentes_ja_processados": job.componentes_processados or []
+    }
+
+
+@router.delete("/planejamento-completo/job/{task_id}")
+async def cancelar_job(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Cancela/pausa um job em andamento.
+    Os resultados parciais são preservados para retomada futura.
+    """
+    from app.models.planejamento_job import PlanejamentoJob, JobStatus
+    
+    job = db.query(PlanejamentoJob).filter(
+        PlanejamentoJob.task_id == task_id
+    ).first()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job não encontrado")
+    
+    if job.status == JobStatus.COMPLETED.value:
+        raise HTTPException(status_code=400, detail="Job já foi concluído")
+    
+    job.status = JobStatus.PAUSED.value
+    job.message = "Job pausado pelo usuário"
+    db.commit()
+    
+    return {
+        "message": "Job pausado com sucesso",
+        "task_id": task_id,
+        "componentes_processados": job.componentes_processados,
+        "pode_retomar": True
+    }
 
 
 # ============================================
@@ -782,3 +1044,144 @@ async def obter_historico_ajustes(
         }
         for a in ajustes
     ]
+
+
+# ============================================
+# ENDPOINTS - Planejamento COMPLETO (TODAS as habilidades)
+# ============================================
+
+@router.get("/planejamento-completo/componentes/{ano_escolar}")
+async def listar_componentes_ano(
+    ano_escolar: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Lista todos os componentes curriculares disponíveis para um ano escolar
+    com a contagem de habilidades de cada um.
+    """
+    service = PlanejamentoBNNCCompletoService(db)
+    return service.listar_componentes_disponiveis(ano_escolar)
+
+
+@router.post("/gerar-planejamento-completo/async")
+async def iniciar_geracao_planejamento_completo(
+    request: GerarPlanejamentoRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Inicia a geração de planejamento COMPLETO em background.
+    Gera adaptações para TODAS as habilidades da BNCC do ano escolar.
+    
+    Retorna imediatamente com um task_id para acompanhar o progresso.
+    
+    ATENÇÃO: Este processo pode demorar vários minutos dependendo da
+    quantidade de habilidades e componentes selecionados.
+    """
+    # Verificar se o aluno existe
+    student = db.query(Student).filter(Student.id == request.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    
+    # Criar tarefa
+    task_manager = get_task_manager()
+    task_id = task_manager.create_task()
+    
+    # Função que será executada em background
+    async def executar_geracao_completa():
+        from app.database import SessionLocal
+        db_bg = SessionLocal()
+        try:
+            service = PlanejamentoBNNCCompletoService(db_bg)
+            resultado = await service.gerar_planejamento_completo(
+                student_id=request.student_id,
+                ano_letivo=request.ano_letivo,
+                componentes=request.componentes,
+                task_id=task_id,
+                task_manager=task_manager
+            )
+            return resultado
+        finally:
+            db_bg.close()
+    
+    # Executar em background
+    asyncio.create_task(
+        task_manager.run_task(task_id, executar_geracao_completa)
+    )
+    
+    return {
+        "task_id": task_id,
+        "message": "Geração de planejamento COMPLETO iniciada. Use /planejamento/task/{task_id} para acompanhar.",
+        "status": "pending",
+        "tipo": "planejamento_completo"
+    }
+
+
+@router.post("/gerar-planejamento-completo")
+async def gerar_planejamento_completo_sincrono(
+    request: GerarPlanejamentoRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Gera planejamento COMPLETO de forma síncrona.
+    Gera adaptações para TODAS as habilidades da BNCC.
+    
+    ATENÇÃO: Esta operação pode demorar MUITO tempo (vários minutos).
+    Para melhor experiência, use o endpoint /async.
+    """
+    student = db.query(Student).filter(Student.id == request.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    
+    service = PlanejamentoBNNCCompletoService(db)
+    
+    try:
+        resultado = await service.gerar_planejamento_completo(
+            student_id=request.student_id,
+            ano_letivo=request.ano_letivo,
+            componentes=request.componentes
+        )
+        
+        return resultado
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/salvar-planejamento-completo")
+async def salvar_planejamento_completo(
+    request: SalvarPlanejamentoRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    Salva o planejamento COMPLETO como PEI no banco de dados.
+    Cria o PEI e TODOS os objetivos (um para cada habilidade da BNCC).
+    """
+    student = db.query(Student).filter(Student.id == request.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    
+    service = PlanejamentoBNNCCompletoService(db)
+    
+    try:
+        pei = service.salvar_planejamento_completo(
+            student_id=request.student_id,
+            planejamento=request.planejamento,
+            user_id=current_user.id,
+            ano_letivo=request.ano_letivo
+        )
+        
+        return {
+            "success": True,
+            "pei_id": pei.id,
+            "message": "Planejamento completo salvo com sucesso",
+            "total_objetivos": len(pei.objetivos)
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

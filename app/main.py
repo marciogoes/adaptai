@@ -175,6 +175,44 @@ async def startup_event():
     print(f"[AI MODEL] {settings.CLAUDE_MODEL}")
     print(f"[PRODUCTION] {bool(IS_PRODUCTION)}")
     print("="*60)
+    
+    # Cleanup de jobs travados no startup
+    try:
+        from app.services.job_protection_service import cleanup_stuck_jobs
+        from app.database import SessionLocal
+        from sqlalchemy.ext.asyncio import AsyncSession
+        import asyncio
+        
+        # Usar sessão síncrona para cleanup
+        db = SessionLocal()
+        try:
+            from sqlalchemy import text
+            from datetime import datetime, timedelta
+            
+            # Buscar e marcar jobs travados
+            timeout = datetime.utcnow() - timedelta(minutes=5)
+            result = db.execute(text("""
+                UPDATE planejamento_jobs 
+                SET status = 'failed',
+                    ultimo_erro = 'Job travado - cleanup no startup',
+                    completed_at = NOW()
+                WHERE status = 'processing'
+                AND (
+                    last_heartbeat < :timeout
+                    OR last_heartbeat IS NULL
+                    OR updated_at < :timeout
+                )
+            """), {"timeout": timeout})
+            db.commit()
+            
+            if result.rowcount > 0:
+                print(f"[CLEANUP] {result.rowcount} jobs travados marcados como FAILED")
+            else:
+                print("[CLEANUP] Nenhum job travado encontrado")
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[CLEANUP] Erro no cleanup (não crítico): {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():

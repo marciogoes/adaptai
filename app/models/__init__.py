@@ -94,6 +94,13 @@ from app.models.redacao import (
     StatusRedacao
 )
 
+# Jobs de Planejamento
+from app.models.planejamento_job import (
+    PlanejamentoJob,
+    PlanejamentoJobLog,
+    JobStatus
+)
+
 
 __all__ = [
     # Multi-tenant
@@ -182,4 +189,9 @@ __all__ = [
     "TemaRedacao",
     "RedacaoAluno",
     "StatusRedacao",
+    
+    # Jobs de Planejamento
+    "PlanejamentoJob",
+    "PlanejamentoJobLog",
+    "JobStatus",
 ]

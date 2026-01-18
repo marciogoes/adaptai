@@ -1,8 +1,8 @@
 """
-📝 AdaptAI - Modelo de Redação
-Sistema de redações estilo ENEM com correção por IA
+📝 AdaptAI - Modelo de Redação ENEM
+Sistema de redações com correção por IA nas 5 competências
 """
-from sqlalchemy import Column, Integer, String, Text, DateTime, Float, JSON, ForeignKey, Enum as SQLEnum, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey, Enum as SQLEnum, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -12,53 +12,56 @@ from app.database import Base
 
 
 class StatusRedacao(str, Enum):
-    """Status da redação"""
+    """Status da redação do aluno"""
     RASCUNHO = "rascunho"           # Aluno ainda está escrevendo
-    SUBMETIDA = "submetida"         # Aguardando correção
-    CORRIGINDO = "corrigindo"       # IA está corrigindo
+    SUBMETIDA = "submetida"         # Aguardando correção pela IA
     CORRIGIDA = "corrigida"         # Correção finalizada
-    ERRO = "erro"                   # Erro na correção
+    ANULADA = "anulada"             # Redação anulada (fuga do tema, etc.)
 
 
 class TemaRedacao(Base):
     """
-    Tema de redação gerado pela IA
-    Baseado em temas atuais e relevantes
+    Tema de redação gerado pela IA ou criado manualmente
+    Formato completo no estilo ENEM com textos motivadores
     """
     __tablename__ = "temas_redacao"
     
     id = Column(Integer, primary_key=True, index=True)
     
-    # Tema principal
-    titulo = Column(String(500), nullable=False)
-    tema_completo = Column(Text, nullable=False)  # Proposta completa estilo ENEM
+    # Tema e proposta
+    titulo = Column(String(300), nullable=False)  # Título curto
+    tema = Column(Text, nullable=False)           # Tema completo
+    proposta = Column(Text, nullable=False)       # Proposta de redação
     
-    # Textos motivadores (como no ENEM)
-    textos_motivadores = Column(JSON, nullable=True)  # Lista de textos
+    # Textos motivadores (como no ENEM - até 4 textos)
+    texto_motivador_1 = Column(Text, nullable=True)
+    texto_motivador_2 = Column(Text, nullable=True)
+    texto_motivador_3 = Column(Text, nullable=True)
+    texto_motivador_4 = Column(Text, nullable=True)
     
     # Contexto
     area_tematica = Column(String(100), nullable=True)  # Saúde, Tecnologia, Meio Ambiente, etc.
-    palavras_chave = Column(JSON, nullable=True)
+    palavras_chave = Column(JSON, nullable=True)        # Lista de palavras-chave
     
-    # Metadados
-    fonte_inspiracao = Column(String(255), nullable=True)  # Notícia que inspirou
+    # Configuração
     nivel_dificuldade = Column(String(20), default="medio")  # facil, medio, dificil
+    ativo = Column(Boolean, default=True)
     
     # Controle
-    ativo = Column(Boolean, default=True)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
     criado_por_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     
     # Relacionamentos
-    criado_por = relationship("User", back_populates="temas_criados")
-    redacoes = relationship("Redacao", back_populates="tema")
+    criado_por = relationship("User", back_populates="temas_redacao_criados")
+    redacoes = relationship("RedacaoAluno", back_populates="tema", cascade="all, delete-orphan")
 
 
-class Redacao(Base):
+class RedacaoAluno(Base):
     """
-    Redação do aluno
+    Redação do aluno com correção nas 5 competências do ENEM
+    Nota final de 0 a 1000 pontos
     """
-    __tablename__ = "redacoes"
+    __tablename__ = "redacoes_alunos"
     
     id = Column(Integer, primary_key=True, index=True)
     
@@ -67,105 +70,61 @@ class Redacao(Base):
     aluno_id = Column(Integer, ForeignKey("students.id"), nullable=False)
     
     # Texto da redação
-    titulo_redacao = Column(String(255), nullable=True)  # Título dado pelo aluno
-    texto = Column(Text, nullable=True)  # Texto completo da redação
+    titulo_redacao = Column(String(200), nullable=True)  # Título dado pelo aluno
+    texto = Column(Text, nullable=True)                   # Texto completo da redação
     
     # Contadores
-    quantidade_palavras = Column(Integer, default=0)
     quantidade_linhas = Column(Integer, default=0)
-    quantidade_paragrafos = Column(Integer, default=0)
+    quantidade_palavras = Column(Integer, default=0)
     
     # Status
     status = Column(SQLEnum(StatusRedacao), default=StatusRedacao.RASCUNHO)
     
     # Datas
-    iniciada_em = Column(DateTime(timezone=True), server_default=func.now())
-    submetida_em = Column(DateTime(timezone=True), nullable=True)
-    corrigida_em = Column(DateTime(timezone=True), nullable=True)
+    iniciado_em = Column(DateTime(timezone=True), server_default=func.now())
+    submetido_em = Column(DateTime(timezone=True), nullable=True)
+    corrigido_em = Column(DateTime(timezone=True), nullable=True)
     
-    # Tempo
-    tempo_escrita_minutos = Column(Integer, nullable=True)
+    # ========================================
+    # NOTAS POR COMPETÊNCIA (0-200 cada)
+    # ========================================
+    # Competência 1: Domínio da norma culta
+    nota_competencia_1 = Column(Integer, nullable=True)
+    feedback_competencia_1 = Column(Text, nullable=True)
+    
+    # Competência 2: Compreensão da proposta
+    nota_competencia_2 = Column(Integer, nullable=True)
+    feedback_competencia_2 = Column(Text, nullable=True)
+    
+    # Competência 3: Argumentação
+    nota_competencia_3 = Column(Integer, nullable=True)
+    feedback_competencia_3 = Column(Text, nullable=True)
+    
+    # Competência 4: Coesão textual
+    nota_competencia_4 = Column(Integer, nullable=True)
+    feedback_competencia_4 = Column(Text, nullable=True)
+    
+    # Competência 5: Proposta de intervenção
+    nota_competencia_5 = Column(Integer, nullable=True)
+    feedback_competencia_5 = Column(Text, nullable=True)
+    
+    # ========================================
+    # NOTA FINAL E FEEDBACK GERAL
+    # ========================================
+    nota_final = Column(Integer, nullable=True)  # 0-1000 (soma das 5 competências)
+    feedback_geral = Column(Text, nullable=True)
+    
+    # Análise detalhada
+    pontos_fortes = Column(JSON, nullable=True)    # Lista de pontos positivos
+    pontos_melhoria = Column(JSON, nullable=True)  # Lista de pontos a melhorar
+    sugestoes = Column(JSON, nullable=True)        # Sugestões de estudo
+    analise_detalhada = Column(JSON, nullable=True)  # Dados completos da correção
     
     # Relacionamentos
     tema = relationship("TemaRedacao", back_populates="redacoes")
     aluno = relationship("Student", back_populates="redacoes")
-    correcao = relationship("CorrecaoRedacao", back_populates="redacao", uselist=False)
-
-
-class CorrecaoRedacao(Base):
-    """
-    Correção da redação no padrão ENEM
-    5 competências, cada uma valendo 0-200 pontos
-    Total: 0-1000 pontos
-    """
-    __tablename__ = "correcoes_redacao"
     
-    id = Column(Integer, primary_key=True, index=True)
-    redacao_id = Column(Integer, ForeignKey("redacoes.id"), nullable=False, unique=True)
-    
-    # ========================================
-    # COMPETÊNCIA 1: Domínio da escrita formal
-    # ========================================
-    # Demonstrar domínio da modalidade escrita formal da língua portuguesa
-    comp1_nota = Column(Integer, default=0)  # 0-200
-    comp1_nivel = Column(Integer, default=0)  # 0-5 (níveis do ENEM)
-    comp1_comentario = Column(Text, nullable=True)
-    comp1_erros = Column(JSON, nullable=True)  # Lista de erros encontrados
-    
-    # ========================================
-    # COMPETÊNCIA 2: Compreensão da proposta
-    # ========================================
-    # Compreender a proposta e aplicar conceitos para desenvolver o tema
-    comp2_nota = Column(Integer, default=0)
-    comp2_nivel = Column(Integer, default=0)
-    comp2_comentario = Column(Text, nullable=True)
-    comp2_analise = Column(JSON, nullable=True)  # Análise da abordagem
-    
-    # ========================================
-    # COMPETÊNCIA 3: Argumentação
-    # ========================================
-    # Selecionar, relacionar, organizar e interpretar informações
-    comp3_nota = Column(Integer, default=0)
-    comp3_nivel = Column(Integer, default=0)
-    comp3_comentario = Column(Text, nullable=True)
-    comp3_argumentos = Column(JSON, nullable=True)  # Argumentos identificados
-    
-    # ========================================
-    # COMPETÊNCIA 4: Coesão textual
-    # ========================================
-    # Demonstrar conhecimento dos mecanismos linguísticos necessários
-    comp4_nota = Column(Integer, default=0)
-    comp4_nivel = Column(Integer, default=0)
-    comp4_comentario = Column(Text, nullable=True)
-    comp4_conectivos = Column(JSON, nullable=True)  # Uso de conectivos
-    
-    # ========================================
-    # COMPETÊNCIA 5: Proposta de intervenção
-    # ========================================
-    # Elaborar proposta de intervenção respeitando os direitos humanos
-    comp5_nota = Column(Integer, default=0)
-    comp5_nivel = Column(Integer, default=0)
-    comp5_comentario = Column(Text, nullable=True)
-    comp5_elementos = Column(JSON, nullable=True)  # Elementos da proposta
-    
-    # ========================================
-    # NOTA FINAL E FEEDBACK
-    # ========================================
-    nota_total = Column(Integer, default=0)  # 0-1000
-    
-    # Feedback geral
-    feedback_geral = Column(Text, nullable=True)
-    pontos_fortes = Column(JSON, nullable=True)
-    pontos_melhorar = Column(JSON, nullable=True)
-    sugestoes_estudo = Column(JSON, nullable=True)
-    
-    # Texto corrigido (com marcações)
-    texto_corrigido_html = Column(Text, nullable=True)
-    
-    # Metadados da correção
-    modelo_ia = Column(String(50), default="claude")
-    tempo_correcao_segundos = Column(Integer, nullable=True)
-    corrigida_em = Column(DateTime(timezone=True), server_default=func.now())
-    
-    # Relacionamento
-    redacao = relationship("Redacao", back_populates="correcao")
+    # Unique constraint: cada aluno só pode ter uma redação por tema
+    __table_args__ = (
+        {'mysql_charset': 'utf8mb4', 'mysql_collate': 'utf8mb4_unicode_ci'},
+    )

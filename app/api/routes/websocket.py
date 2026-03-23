@@ -1,8 +1,7 @@
 """
 Endpoint WebSocket para notificações em tempo real
 """
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
-from app.api.dependencies import get_current_active_user_ws
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.services.websocket_manager import manager
 
 router = APIRouter()

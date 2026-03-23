@@ -11,6 +11,7 @@ from pathlib import Path
 import base64
 import json
 import os
+import asyncio
 from datetime import datetime
 import hashlib
 import time
@@ -599,4 +600,145 @@ async def upload_e_analisar_relatorio(
         "message": "✅ Upload realizado com sucesso! A análise com IA está sendo processada.",
         "status": "processing",
         "tempo_estimado": "20-30 segundos"
+    }
+
+
+# ============= UPLOAD INCREMENTAL COM WEBSOCKET (v2) =============
+
+async def _processar_relatorio_incremental_bg(
+    relatorio_id: int,
+    pdf_path: Path,
+    json_path: Path,
+    content_type: str,
+    user_id: int
+):
+    """
+    Wrapper assíncrono para processar relatório de forma incremental.
+    Notifica o frontend via WebSocket a cada etapa.
+    """
+    try:
+        from anthropic import Anthropic
+        from app.services.relatorio_processor import RelatorioProcessorIncremental
+        client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        processor = RelatorioProcessorIncremental(client)
+        await processor.processar_incremental(
+            relatorio_id=relatorio_id,
+            pdf_path=pdf_path,
+            json_path=json_path,
+            content_type=content_type,
+            user_id=user_id
+        )
+    except Exception as e:
+        print(f"❌ [INCREMENTAL] Erro: {e}")
+        # Notificar erro via WebSocket
+        try:
+            from app.services.websocket_manager import manager
+            await manager.notify_relatorio_progress(
+                user_id, relatorio_id, "error", 0, {"error": str(e)}
+            )
+        except:
+            pass
+
+
+@router.post("/upload-analisar-rapido")
+async def upload_e_analisar_rapido(
+    background_tasks: BackgroundTasks,
+    arquivo: UploadFile = File(...),
+    student_id: int = Form(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    """
+    🚀 UPLOAD ULTRA-RÁPIDO v2 com WebSocket
+    
+    Retorna em <1 segundo.
+    O frontend recebe atualizações em tempo real via WebSocket (/api/v1/ws).
+    Processamento incremental: extrai dados em 4 etapas paralelas.
+    Tempo estimado: 8-15 segundos.
+    
+    Para receber atualizações:
+    - Conecte no WebSocket: ws://host/api/v1/ws?token=JWT
+    - Escute mensagens: { type: 'relatorio_progress', relatorio_id, stage, progress, data }
+    """
+
+    # Verificar aluno
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+
+    content_type = arquivo.content_type
+    allowed_types = ["application/pdf", "image/jpeg", "image/png", "image/jpg", "image/webp"]
+    if content_type not in allowed_types:
+        raise HTTPException(status_code=400, detail=f"Tipo não suportado: {content_type}")
+
+    file_content = await arquivo.read()
+    if len(file_content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Arquivo muito grande. Máximo: 10MB")
+
+    full_file_hash = hashlib.md5(file_content).hexdigest()
+
+    # Verificar duplicata
+    for rel in db.query(Relatorio).filter(Relatorio.student_id == student_id).all():
+        if hasattr(rel, 'arquivo_path') and rel.arquivo_path and full_file_hash in rel.arquivo_path:
+            return {
+                "success": False,
+                "duplicate": True,
+                "message": f"⛔ Este arquivo já foi carregado em {rel.created_at.strftime('%d/%m/%Y')}",
+                "relatorio_existente": {"id": rel.id, "arquivo_nome": rel.arquivo_nome}
+            }
+
+    # Salvar arquivo
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_extension = Path(arquivo.filename).suffix
+    base_filename = f"relatorio_{student_id}_{timestamp}_{full_file_hash}"
+    safe_pdf_filename = f"{base_filename}{file_extension}"
+    safe_json_filename = f"{base_filename}.json"
+    pdf_path = RELATORIOS_DIR / safe_pdf_filename
+    json_path = RELATORIOS_DIR / safe_json_filename
+
+    with open(pdf_path, "wb") as f:
+        f.write(file_content)
+
+    # Criar registro mínimo
+    novo_relatorio = Relatorio(
+        student_id=student_id,
+        tipo="Processando...",
+        profissional_nome="",
+        profissional_registro="",
+        profissional_especialidade="",
+        data_emissao=None,
+        data_validade=None,
+        cid="",
+        resumo="Análise incremental em andamento...",
+        arquivo_nome=arquivo.filename[:255],
+        arquivo_tipo=content_type[:50],
+        arquivo_base64=None,
+        dados_extraidos={"json_path": safe_json_filename},
+        condicoes=None,
+        created_by=current_user.id
+    )
+    if hasattr(Relatorio, 'arquivo_path'):
+        setattr(novo_relatorio, 'arquivo_path', safe_pdf_filename)
+
+    db.add(novo_relatorio)
+    db.commit()
+    db.refresh(novo_relatorio)
+
+    # Disparar processamento incremental em background
+    background_tasks.add_task(
+        _processar_relatorio_incremental_bg,
+        novo_relatorio.id,
+        pdf_path,
+        json_path,
+        content_type,
+        current_user.id
+    )
+
+    return {
+        "success": True,
+        "relatorio_id": novo_relatorio.id,
+        "message": "✅ Upload concluído! Acompanhe o processamento via WebSocket.",
+        "websocket_channel": f"relatorio_progress (relatorio_id={novo_relatorio.id})",
+        "status": "processing",
+        "tempo_estimado": "8-15 segundos"
     }

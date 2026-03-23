@@ -55,7 +55,7 @@ def diagnostico():
         print("-" * 60)
         result = conn.execute(text("""
             SELECT p.id, p.student_id, s.name, p.ano_letivo, p.status, p.created_at
-            FROM pei p
+            FROM peis p
             JOIN students s ON p.student_id = s.id
             ORDER BY p.created_at DESC
             LIMIT 10

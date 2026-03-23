@@ -34,6 +34,8 @@ from app.api.routes import agenda  # AGENDA DO PROFESSOR
 from app.api.routes import registro_diario  # REGISTRO DIÁRIO DE AULAS
 from app.api.routes import conteudos_aluno  # CONTEÚDOS DO ALUNO (INTEGRAÇÃO)
 from app.api.routes import redacoes  # REDAÇÕES ENEM COM IA
+from app.api.routes import checkout  # CHECKOUT / ONBOARDING DE NOVAS ESCOLAS
+from app.api.routes import websocket  # WEBSOCKET - NOTIFICAÇÕES EM TEMPO REAL
 
 # Criar tabelas
 Base.metadata.create_all(bind=engine)
@@ -145,6 +147,8 @@ app.include_router(agenda.router, prefix="/api/v1", tags=["📅 Agenda"])
 app.include_router(registro_diario.router, prefix="/api/v1", tags=["📚 Registro Diário"])
 app.include_router(conteudos_aluno.router, prefix="/api/v1", tags=["📚 Conteúdos Aluno"])
 app.include_router(redacoes.router, prefix="/api/v1", tags=["✍️ Redações ENEM"])
+app.include_router(checkout.router, prefix="/api/v1", tags=["🛒 Checkout"])
+app.include_router(websocket.router, prefix="/api/v1", tags=["🔌 WebSocket"])
 
 # ============================================
 # Rotas principais

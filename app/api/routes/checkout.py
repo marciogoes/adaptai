@@ -5,13 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
-import jwt
 from app.database import get_db
 from app.models.escola import Escola, ConfiguracaoEscola
 from app.models.user import User, UserRole
 from app.models.plano import Plano
 from app.models.assinatura import Assinatura
 from app.core.config import settings
+from app.core.security import create_access_token
 from app.schemas.multitenant import CheckoutRequest, CheckoutResponse, StatusAssinatura
 
 router = APIRouter(prefix="/checkout", tags=["🛒 Checkout"])
@@ -21,13 +21,10 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 def criar_token_acesso(user_id: int, email: str) -> str:
     """Cria token JWT para login automático após cadastro"""
-    expire = datetime.utcnow() + timedelta(days=7)
-    to_encode = {
-        "sub": str(user_id),
-        "email": email,
-        "exp": expire
-    }
-    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
+    return create_access_token(
+        data={"sub": email},
+        expires_delta=timedelta(days=7)
+    )
 
 
 @router.post("/iniciar", response_model=CheckoutResponse)

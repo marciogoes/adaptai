@@ -65,6 +65,40 @@ def listar_minhas_provas(current_student: Student = Depends(get_current_student)
     return resultado
 
 
+@router.get("/{prova_aluno_id}")
+def obter_prova_detalhe(prova_aluno_id: int, current_student: Student = Depends(get_current_student), db: Session = Depends(get_db)):
+    """Obter detalhes de uma prova específica do estudante"""
+    prova_aluno = db.query(ProvaAluno).filter(
+        ProvaAluno.id == prova_aluno_id,
+        ProvaAluno.aluno_id == current_student.id
+    ).first()
+
+    if not prova_aluno:
+        raise HTTPException(status_code=404, detail="Prova não encontrada")
+
+    prova = db.query(Prova).filter(Prova.id == prova_aluno.prova_id).first()
+
+    return {
+        "prova_aluno_id": prova_aluno.id,
+        "prova_id": prova.id,
+        "titulo": prova.titulo,
+        "descricao": prova.descricao,
+        "materia": prova.materia,
+        "serie_nivel": prova.serie_nivel,
+        "quantidade_questoes": prova.quantidade_questoes,
+        "tempo_limite_minutos": prova.tempo_limite_minutos,
+        "pontuacao_total": prova.pontuacao_total,
+        "nota_minima_aprovacao": prova.nota_minima_aprovacao,
+        "status": prova_aluno.status.value,
+        "data_atribuicao": prova_aluno.data_atribuicao,
+        "data_inicio": prova_aluno.data_inicio,
+        "data_conclusao": prova_aluno.data_conclusao,
+        "nota_final": prova_aluno.nota_final,
+        "aprovado": prova_aluno.aprovado,
+        "tempo_gasto_minutos": prova_aluno.tempo_gasto_minutos,
+    }
+
+
 @router.post("/{prova_aluno_id}/iniciar")
 def iniciar_prova(prova_aluno_id: int, current_student: Student = Depends(get_current_student), db: Session = Depends(get_db)):
     """Iniciar prova"""

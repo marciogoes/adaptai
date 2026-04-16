@@ -1,89 +1,50 @@
 """
-📋 Listar Todos os Usuários - AdaptAI
+Script para listar todos os usuários cadastrados no banco do AdaptAI
+Execute na pasta backend: venv\Scripts\python.exe listar_usuarios.py
 """
-import sys
-import os
-from urllib.parse import quote_plus
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pymysql
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-from dotenv import load_dotenv
+DB_CONFIG = {
+    "host": "teamarcionovo.mysql.dbaas.com.br",
+    "port": 3306,
+    "user": "teamarcionovo",
+    "password": "MarcioGo1003@@",
+    "database": "teamarcionovo",
+    "charset": "utf8mb4",
+}
 
-load_dotenv()
+def listar_usuarios():
+    print("=" * 70)
+    print("👥 USUÁRIOS CADASTRADOS - AdaptAI")
+    print("=" * 70)
 
-# Configuração do banco
-MYSQL_HOST = os.getenv("MYSQL_HOST")
-MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
-MYSQL_USER = os.getenv("MYSQL_USER")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
+    try:
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor()
 
-MYSQL_PASSWORD_ESCAPED = quote_plus(MYSQL_PASSWORD) if MYSQL_PASSWORD else ""
-DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD_ESCAPED}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DATABASE}"
+        cursor.execute("""
+            SELECT id, name, email, role, is_active
+            FROM users
+            ORDER BY role, name
+        """)
+        users = cursor.fetchall()
 
-print()
-print("=" * 80)
-print("📋 LISTANDO TODOS OS USUÁRIOS DO ADAPTAI")
-print("=" * 80)
-print()
+        if not users:
+            print("\n❌ Nenhum usuário encontrado!")
+        else:
+            print(f"\n{'ID':<5} {'Nome':<30} {'Email':<45} {'Role':<15} {'Ativo'}")
+            print("-" * 100)
+            for u in users:
+                ativo = "✅" if u[4] else "❌"
+                print(f"{u[0]:<5} {u[1]:<30} {u[2]:<45} {u[3]:<15} {ativo}")
 
-try:
-    engine = create_engine(DATABASE_URL, echo=False)
-    SessionLocal = sessionmaker(bind=engine)
-    db = SessionLocal()
-    
-    # Lista todos os usuários
-    result = db.execute(text("""
-        SELECT id, name, email, role, is_active, created_at 
-        FROM users 
-        ORDER BY role, name
-    """))
-    
-    usuarios = result.fetchall()
-    
-    if not usuarios:
-        print("❌ Nenhum usuário encontrado no banco de dados!")
-    else:
-        print(f"Total de usuários: {len(usuarios)}")
-        print()
-        print("┌─────┬────────────────────────────────┬────────────────────────────────────┬──────────────┬────────┐")
-        print("│ ID  │ NOME                           │ EMAIL                              │ PERFIL       │ ATIVO  │")
-        print("├─────┼────────────────────────────────┼────────────────────────────────────┼──────────────┼────────┤")
-        
-        for user in usuarios:
-            id_str = str(user[0]).ljust(3)
-            nome = (user[1] or "")[:30].ljust(30)
-            email = (user[2] or "")[:34].ljust(34)
-            role = (user[3] or "").upper()[:12].ljust(12)
-            ativo = "✅ Sim" if user[4] else "❌ Não"
-            ativo = ativo.ljust(6)
-            print(f"│ {id_str} │ {nome} │ {email} │ {role} │ {ativo} │")
-        
-        print("└─────┴────────────────────────────────┴────────────────────────────────────┴──────────────┴────────┘")
-        
-        # Resumo por perfil
-        print()
-        print("📊 RESUMO POR PERFIL:")
-        print("-" * 40)
-        
-        result_resumo = db.execute(text("""
-            SELECT role, COUNT(*) as total 
-            FROM users 
-            GROUP BY role 
-            ORDER BY total DESC
-        """))
-        
-        for row in result_resumo.fetchall():
-            print(f"   • {row[0].upper()}: {row[1]} usuário(s)")
-    
-    db.close()
-    
-except Exception as e:
-    print(f"❌ Erro: {str(e)}")
-    import traceback
-    traceback.print_exc()
+        print(f"\nTotal: {len(users)} usuário(s)")
+        cursor.close()
+        conn.close()
 
-print()
-print("=" * 80)
+    except Exception as e:
+        print(f"\n❌ ERRO: {e}")
+
+if __name__ == "__main__":
+    listar_usuarios()

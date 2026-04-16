@@ -35,6 +35,7 @@ from app.api.routes import registro_diario  # REGISTRO DIÁRIO DE AULAS
 from app.api.routes import conteudos_aluno  # CONTEÚDOS DO ALUNO (INTEGRAÇÃO)
 from app.api.routes import redacoes  # REDAÇÕES ENEM COM IA
 from app.api.routes import checkout  # CHECKOUT / ONBOARDING DE NOVAS ESCOLAS
+from app.api.routes import relatorios_v2  # RELATÓRIOS V2 - UPLOAD ULTRA-RÁPIDO COM WEBSOCKET
 from app.api.routes import websocket  # WEBSOCKET - NOTIFICAÇÕES EM TEMPO REAL
 
 # Criar tabelas
@@ -148,6 +149,7 @@ app.include_router(registro_diario.router, prefix="/api/v1", tags=["📚 Registr
 app.include_router(conteudos_aluno.router, prefix="/api/v1", tags=["📚 Conteúdos Aluno"])
 app.include_router(redacoes.router, prefix="/api/v1", tags=["✍️ Redações ENEM"])
 app.include_router(checkout.router, prefix="/api/v1", tags=["🛒 Checkout"])
+app.include_router(relatorios_v2.router, prefix="/api/v1", tags=["📋 Relatórios V2 Ultra-Rápido"])
 app.include_router(websocket.router, prefix="/api/v1", tags=["🔌 WebSocket"])
 
 # ============================================

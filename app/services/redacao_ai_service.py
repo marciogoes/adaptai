@@ -8,9 +8,11 @@ import re
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from anthropic import Anthropic
+from app.core.config import settings
 
 # Inicializar cliente Anthropic
-anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+anthropic_client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+_MODELO_IA = settings.CLAUDE_MODEL or "claude-3-5-sonnet-20241022"
 
 
 class RedacaoAIService:
@@ -148,7 +150,7 @@ IMPORTANTE:
 
         try:
             response = anthropic_client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=_MODELO_IA,
                 max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -263,7 +265,7 @@ IMPORTANTE:
 
         try:
             response = anthropic_client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=_MODELO_IA,
                 max_tokens=3000,
                 messages=[{"role": "user", "content": prompt}]
             )

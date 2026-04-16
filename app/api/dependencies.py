@@ -95,7 +95,7 @@ def require_teacher(
     """
     from app.models.user import UserRole
     
-    if current_user.role not in [UserRole.TEACHER, UserRole.COORDINATOR, UserRole.ADMIN]:
+    if current_user.role not in [UserRole.TEACHER, UserRole.COORDINATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions. Teacher role required."
@@ -110,7 +110,7 @@ def require_coordinator(
     """
     from app.models.user import UserRole
     
-    if current_user.role not in [UserRole.COORDINATOR, UserRole.ADMIN]:
+    if current_user.role not in [UserRole.COORDINATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions. Coordinator role required."
@@ -121,11 +121,11 @@ def require_admin(
     current_user: User = Depends(get_current_active_user)
 ) -> User:
     """
-    Requer que o usuário seja admin
+    Requer que o usuário seja admin ou super_admin
     """
     from app.models.user import UserRole
     
-    if current_user.role != UserRole.ADMIN:
+    if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions. Admin role required."

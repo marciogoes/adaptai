@@ -27,7 +27,7 @@ from app.models.planejamento_job import PlanejamentoJob, PlanejamentoJobLog, Job
 
 # Cliente Anthropic (inicialização lazy)
 _client = None
-MODELO_IA = "claude-sonnet-4-20250514"
+MODELO_IA = settings.CLAUDE_MODEL or "claude-3-5-sonnet-20241022"
 
 # Configurações de retry e processamento
 MAX_RETRIES = 3  # Tentativas por lote

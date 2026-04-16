@@ -7,6 +7,7 @@ class UserRole(str, Enum):
     TEACHER = "teacher"
     COORDINATOR = "coordinator"
     ADMIN = "admin"
+    SUPER_ADMIN = "super_admin"  # Admin global do sistema
 
 class UserBase(BaseModel):
     name: str = Field(..., min_length=3, max_length=255)

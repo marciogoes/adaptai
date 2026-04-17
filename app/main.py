@@ -9,6 +9,10 @@ from app.core.config import settings
 from app.core.logging_config import setup_logging, get_logger
 from app.database import engine, Base
 
+# Fonte unica da verdade para deteccao de producao. Ver comentario em
+# config.py::is_production_environment para motivacao.
+from app.core.config import is_production_environment
+
 # Configurar logging antes de qualquer outro import que possa logar
 setup_logging(level="INFO")
 logger = get_logger(__name__)
@@ -49,7 +53,7 @@ from app.api.routes import admin_monitoring  # ADMIN - MONITORAMENTO (cache IA, 
 # e NAO deve ser alterado pelo app no startup - rodar create_all em prod mascara
 # schema drift, pode recriar indices silenciosamente e e uma pegadinha classica
 # em incidentes ("por que a tabela X voltou?"). Ver docs/migrations.md.
-if not bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION")):
+if not is_production_environment():
     Base.metadata.create_all(bind=engine)
     logger.info("Base.metadata.create_all executado (dev)")
 else:
@@ -62,7 +66,7 @@ else:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ========== STARTUP ==========
-    IS_PRODUCTION_STARTUP = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION"))
+    IS_PRODUCTION_STARTUP = is_production_environment()
     logger.info(
         "AdaptAI backend starting",
         extra={
@@ -170,7 +174,7 @@ _extra_origin = os.getenv("FRONTEND_URL")
 if _extra_origin:
     ALLOWED_ORIGINS_PROD.append(_extra_origin.strip())
 
-IS_PRODUCTION = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION"))
+IS_PRODUCTION = is_production_environment()
 
 if IS_PRODUCTION:
     origins = ALLOWED_ORIGINS_PROD

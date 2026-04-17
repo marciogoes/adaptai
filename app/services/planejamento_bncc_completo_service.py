@@ -18,6 +18,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 
 from app.core.config import settings
+from app.core.anthropic_client import (
+    get_anthropic_client as _get_core_anthropic_client,
+    get_default_model,
+)
 from app.models.student import Student
 from app.models.curriculo import CurriculoNacional, MapeamentoPrerequisitos
 from app.models.pei import PEI, PEIObjetivo
@@ -25,9 +29,9 @@ from app.models.relatorio import Relatorio
 from app.models.planejamento_job import PlanejamentoJob, PlanejamentoJobLog, JobStatus
 
 
-# Cliente Anthropic (inicialização lazy)
-_client = None
-MODELO_IA = settings.CLAUDE_MODEL or "claude-3-5-sonnet-20241022"
+# Cliente Anthropic: centralizado em app.core.anthropic_client (singleton lazy).
+# Antes este arquivo mantinha _client/MODELO_IA proprios, duplicando instancia
+# e abrindo TLS handshake extra a cada novo servico. Agora reusa o singleton.
 
 # Configurações de retry e processamento
 MAX_RETRIES = 3  # Tentativas por lote
@@ -35,17 +39,6 @@ RETRY_DELAY = 2  # Segundos entre tentativas
 LOTE_SIZE = 12   # Habilidades por lote (reduzido para maior segurança)
 KEEPALIVE_INTERVAL = 30  # Segundos entre pings no MySQL
 MAX_JSON_SIZE_BYTES = 500_000  # 500KB - acima disso comprime
-
-
-def get_anthropic_client():
-    global _client
-    if _client is None:
-        try:
-            from anthropic import Anthropic
-            _client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        except Exception as e:
-            print(f"[AVISO] Erro ao inicializar Anthropic: {e}")
-    return _client
 
 
 class PlanejamentoBNNCCompletoService:
@@ -56,7 +49,14 @@ class PlanejamentoBNNCCompletoService:
     
     def __init__(self, db: Session):
         self.db = db
-        self.client = get_anthropic_client()
+        # Usa cliente Anthropic centralizado. Se nao houver API key configurada,
+        # get_anthropic_client() levanta RuntimeError - capturamos para preservar
+        # o comportamento anterior (construir a instancia, falhar so no uso).
+        try:
+            self.client = _get_core_anthropic_client()
+        except Exception as e:
+            print(f"[AVISO] Cliente Anthropic indisponivel: {e}")
+            self.client = None
     
     # ============================================
     # MÉTODOS DE KEEP-ALIVE E PERSISTÊNCIA
@@ -712,7 +712,7 @@ IMPORTANTE:
 - Retorne APENAS o JSON válido, sem texto adicional"""
 
         message = self.client.messages.create(
-            model=MODELO_IA,
+            model=get_default_model(),
             max_tokens=6000,
             messages=[{"role": "user", "content": prompt}]
         )

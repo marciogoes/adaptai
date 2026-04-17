@@ -1,0 +1,57 @@
+# Ruff - linter rapido para Python
+# https://docs.astral.sh/ruff/
+#
+# Filosofia atual: warnings, nao bloqueia CI.
+# Quando o codebase limpar, remover "|| true" do workflow e habilitar mais regras.
+
+target-version = "py311"
+line-length = 120
+
+exclude = [
+    ".git",
+    "__pycache__",
+    "venv",
+    ".venv",
+    "alembic/versions",     # Migrations geradas - nao editar
+    "_backup_*",            # Backups gerados por scripts de correcao
+    "_old",
+    "storage",
+    "tests/fixtures",
+]
+
+[lint]
+# Regras habilitadas. Comecar conservador e expandir gradualmente.
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes (imports nao usados, variaveis nao usadas)
+    "W",    # pycodestyle warnings
+    "I",    # isort (ordem de imports)
+    "B",    # flake8-bugbear (bugs comuns)
+    "UP",   # pyupgrade (syntax moderna)
+    "SIM",  # flake8-simplify (simplificacoes obvias)
+]
+
+# Regras desabilitadas temporariamente por volume de debito.
+ignore = [
+    "E501",   # Line too long - codebase tem muitas linhas longas, decidir dps
+    "E402",   # Module level import not at top - ha imports deliberadamente dentro de if blocks
+    "B008",   # Function call in default argument - FastAPI usa Depends() que bate nisso
+    "SIM108", # Use ternary operator - discutivel, preservar estilo atual
+    "UP007",  # Use X | Y for Union - ainda suportamos 3.9 em alguns scripts one-off
+]
+
+[lint.per-file-ignores]
+# Testes podem ter praticas relaxadas
+"tests/*" = ["E402", "F401", "F811"]
+# Scripts one-off nao precisam ser formais
+"scripts/*" = ["E402", "F401", "B008"]
+# Migrations Alembic sao geradas automaticamente
+"alembic/versions/*" = ["E", "F", "W", "I", "B", "UP", "SIM"]
+# Models podem ter imports "nao usados" (loaded para SQLAlchemy registrar)
+"app/models/__init__.py" = ["F401"]
+
+[format]
+# Usamos o formatter do ruff em vez de black para manter uma ferramenta so.
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

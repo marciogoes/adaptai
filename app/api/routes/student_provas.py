@@ -9,33 +9,13 @@ from datetime import datetime, timezone
 from app.database import get_db
 from app.models.student import Student
 from app.models.prova import ProvaAluno, Prova, QuestaoGerada, RespostaAluno, StatusProvaAluno
-from app.core.security import decode_access_token
-from fastapi.security import OAuth2PasswordBearer
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login")
+from app.api.dependencies import get_current_student
 
 router = APIRouter(prefix="/student/provas", tags=["Student - Provas"])
 
 
-def get_current_student(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> Student:
-    """Dependency para obter estudante atual do token"""
-    payload = decode_access_token(token)
-    if not payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
-    
-    email: str = payload.get("sub")
-    if not email or not email.startswith("student:"):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token não é de estudante")
-    
-    email = email.replace("student:", "")
-    student = db.query(Student).filter(Student.email == email).first()
-    
-    if not student:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Estudante não encontrado")
-    if not student.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Estudante inativo")
-    
-    return student
+# NOTA: get_current_student agora vem de app.api.dependencies (C4 - centralizado).
+# Antes estava duplicado aqui. Mesma assinatura e comportamento.
 
 
 @router.get("/")

@@ -3,7 +3,7 @@
 # ============================================
 # Versão com suporte a processamento em background
 
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 from typing import Optional, List
 import json
@@ -11,9 +11,18 @@ import asyncio
 from datetime import datetime
 
 from app.database import get_db
-from app.api.dependencies import get_current_active_user
+from app.api.dependencies import (
+    get_current_active_user,
+    verificar_acesso_aluno,
+    verificar_acesso_pei,
+    verificar_acesso_objetivo_pei,
+)
+from app.core.rate_limit import check_rate_limit
+from app.core.logging_config import get_logger
 from app.models.user import User
 from app.models.student import Student
+
+logger = get_logger(__name__)
 from app.models.curriculo import CurriculoNacional, MapeamentoPrerequisitos
 from app.models.pei import PEI, PEIObjetivo, PEIProgressLog, PEIAjuste
 from app.services.planejamento_bncc_service import PlanejamentoBNNCService
@@ -44,6 +53,11 @@ from app.schemas.pei import (
 
 router = APIRouter(prefix="/planejamento", tags=["Planejamento BNCC e PEI"])
 
+# Helpers de ownership sao importados de app.api.dependencies:
+# - verificar_acesso_aluno(db, student_id, current_user)
+# - verificar_acesso_pei(db, pei_id, current_user)
+# - verificar_acesso_objetivo_pei(db, objetivo_id, current_user)
+
 
 # ============================================
 # ENDPOINTS - Background Tasks (Processamento Assíncrono)
@@ -52,6 +66,7 @@ router = APIRouter(prefix="/planejamento", tags=["Planejamento BNCC e PEI"])
 @router.post("/gerar-planejamento-anual/async")
 async def iniciar_geracao_planejamento(
     request: GerarPlanejamentoRequest,
+    http_request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -59,11 +74,16 @@ async def iniciar_geracao_planejamento(
     """
     Inicia a geração de planejamento em background.
     Retorna imediatamente com um task_id para acompanhar o progresso.
+    
+    SEGURANCA: rate limited (5/hora) + IDOR check via verificar_acesso_aluno.
     """
-    # Verificar se o aluno existe
-    student = db.query(Student).filter(Student.id == request.student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    check_rate_limit(
+        http_request, key="gerar_planejamento_anual", max_requests=5, window_seconds=3600,
+        error_message="Limite de geracoes de planejamento atingido. Aguarde 1 hora."
+    )
+    
+    # IDOR: verifica se user pode acessar este aluno
+    verificar_acesso_aluno(db, request.student_id, current_user)
     
     # Criar tarefa
     task_manager = get_task_manager()
@@ -128,11 +148,12 @@ async def listar_peis_aluno_v2(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Lista todos os PEIs de um aluno específico"""
-    # Verificar se o aluno existe
-    student = db.query(Student).filter(Student.id == student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    """Lista todos os PEIs de um aluno específico
+    
+    SEGURANCA: IDOR check.
+    """
+    # IDOR: verifica acesso e pega aluno
+    student = verificar_acesso_aluno(db, student_id, current_user)
     
     # Buscar PEIs do aluno
     peis = db.query(PEI).filter(PEI.student_id == student_id).order_by(PEI.created_at.desc()).all()
@@ -178,11 +199,11 @@ async def obter_pei_completo(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Obtém o PEI completo com todos os objetivos"""
-    pei = db.query(PEI).filter(PEI.id == pei_id).first()
+    """Obtém o PEI completo com todos os objetivos
     
-    if not pei:
-        raise HTTPException(status_code=404, detail="PEI não encontrado")
+    SEGURANCA: IDOR check.
+    """
+    pei = verificar_acesso_pei(db, pei_id, current_user)
     
     # Buscar aluno
     student = db.query(Student).filter(Student.id == pei.student_id).first()
@@ -363,6 +384,7 @@ async def importar_habilidades_bncc(
 @router.post("/gerar-planejamento-anual", response_model=PlanejamentoResponse)
 async def gerar_planejamento_anual(
     request: GerarPlanejamentoRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -372,11 +394,15 @@ async def gerar_planejamento_anual(
     
     ATENÇÃO: Esta operação pode demorar até 2 minutos.
     Para acompanhar o progresso, use o endpoint /gerar-planejamento-anual/async
+    
+    SEGURANCA: rate limited (5/hora) + IDOR check.
     """
-    # Verificar se o aluno existe
-    student = db.query(Student).filter(Student.id == request.student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    check_rate_limit(
+        http_request, key="gerar_planejamento_anual", max_requests=5, window_seconds=3600,
+        error_message="Limite de geracoes de planejamento atingido. Aguarde 1 hora."
+    )
+    
+    verificar_acesso_aluno(db, request.student_id, current_user)
     
     service = PlanejamentoBNNCService(db)
     
@@ -390,23 +416,32 @@ async def gerar_planejamento_anual(
         
         return resultado
         
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Erro ao gerar planejamento anual", extra={"student_id": request.student_id})
+        raise HTTPException(status_code=500, detail="Erro ao gerar planejamento. Tente novamente mais tarde.")
 
 
 @router.post("/gerar-objetivos-trimestre")
 async def gerar_objetivos_trimestre(
     request: GerarPlanejamentoTrimestreRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
     Gera objetivos específicos para um trimestre e componente.
     Útil para planejamento parcial ou ajustes durante o ano.
+    
+    SEGURANCA: rate limited (20/hora) + IDOR check.
     """
-    student = db.query(Student).filter(Student.id == request.student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    check_rate_limit(
+        http_request, key="gerar_objetivos_trimestre", max_requests=20, window_seconds=3600,
+        error_message="Limite de geracoes atingido. Aguarde 1 hora."
+    )
+    
+    verificar_acesso_aluno(db, request.student_id, current_user)
     
     service = PlanejamentoBNNCService(db)
     
@@ -420,8 +455,11 @@ async def gerar_objetivos_trimestre(
         
         return resultado
         
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Erro ao gerar objetivos do trimestre", extra={"student_id": request.student_id})
+        raise HTTPException(status_code=500, detail="Erro ao gerar objetivos. Tente novamente mais tarde.")
 
 
 @router.post("/salvar-planejamento", response_model=PEIResponse)
@@ -433,10 +471,10 @@ async def salvar_planejamento_como_pei(
     """
     Salva o planejamento gerado como um PEI no banco de dados.
     Cria o PEI e todos os objetivos associados.
+    
+    SEGURANCA: IDOR check.
     """
-    student = db.query(Student).filter(Student.id == request.student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    verificar_acesso_aluno(db, request.student_id, current_user)
     
     service = PlanejamentoBNNCService(db)
     
@@ -450,9 +488,12 @@ async def salvar_planejamento_como_pei(
         
         return pei
         
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Erro ao salvar planejamento", extra={"student_id": request.student_id})
+        raise HTTPException(status_code=500, detail="Erro ao salvar planejamento. Tente novamente mais tarde.")
 
 
 @router.get("/planejamento-completo/jobs/{student_id}")
@@ -464,8 +505,12 @@ async def listar_jobs_aluno(
     """
     Lista todos os jobs de planejamento de um aluno.
     Útil para verificar histórico e encontrar jobs para retomar.
+    
+    SEGURANCA: IDOR check.
     """
     from app.models.planejamento_job import PlanejamentoJob
+    
+    verificar_acesso_aluno(db, student_id, current_user)
     
     jobs = db.query(PlanejamentoJob).filter(
         PlanejamentoJob.student_id == student_id
@@ -485,6 +530,8 @@ async def obter_job_detalhado(
 ):
     """
     Obtém detalhes completos de um job, incluindo logs.
+    
+    SEGURANCA: IDOR check via student_id do job.
     """
     from app.models.planejamento_job import PlanejamentoJob, PlanejamentoJobLog
     
@@ -494,6 +541,9 @@ async def obter_job_detalhado(
     
     if not job:
         raise HTTPException(status_code=404, detail="Job não encontrado")
+    
+    # IDOR: verifica acesso ao aluno dono do job
+    verificar_acesso_aluno(db, job.student_id, current_user)
     
     # Buscar logs
     logs = db.query(PlanejamentoJobLog).filter(
@@ -533,6 +583,7 @@ async def obter_job_detalhado(
 @router.post("/planejamento-completo/retomar/{task_id}")
 async def retomar_job(
     task_id: str,
+    http_request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -540,8 +591,15 @@ async def retomar_job(
     """
     Retoma um job interrompido de onde parou.
     Usa os resultados parciais já salvos.
+    
+    SEGURANCA: rate limited (3/hora) + IDOR check via student_id do job.
     """
     from app.models.planejamento_job import PlanejamentoJob, JobStatus
+    
+    check_rate_limit(
+        http_request, key="retomar_planejamento", max_requests=3, window_seconds=3600,
+        error_message="Limite de retomadas atingido. Aguarde 1 hora."
+    )
     
     job = db.query(PlanejamentoJob).filter(
         PlanejamentoJob.task_id == task_id
@@ -549,6 +607,9 @@ async def retomar_job(
     
     if not job:
         raise HTTPException(status_code=404, detail="Job não encontrado")
+    
+    # IDOR: verifica acesso ao aluno dono do job
+    verificar_acesso_aluno(db, job.student_id, current_user)
     
     if job.status == JobStatus.COMPLETED.value:
         raise HTTPException(status_code=400, detail="Job já foi concluído")
@@ -606,6 +667,8 @@ async def cancelar_job(
     """
     Cancela/pausa um job em andamento.
     Os resultados parciais são preservados para retomada futura.
+    
+    SEGURANCA: IDOR check via student_id do job.
     """
     from app.models.planejamento_job import PlanejamentoJob, JobStatus
     
@@ -615,6 +678,9 @@ async def cancelar_job(
     
     if not job:
         raise HTTPException(status_code=404, detail="Job não encontrado")
+    
+    # IDOR: verifica acesso ao aluno dono do job
+    verificar_acesso_aluno(db, job.student_id, current_user)
     
     if job.status == JobStatus.COMPLETED.value:
         raise HTTPException(status_code=400, detail="Job já foi concluído")
@@ -643,7 +709,12 @@ async def listar_peis_aluno(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Lista todos os PEIs de um aluno"""
+    """Lista todos os PEIs de um aluno
+    
+    SEGURANCA: IDOR check.
+    """
+    verificar_acesso_aluno(db, student_id, current_user)
+    
     query = db.query(PEI).filter(PEI.student_id == student_id)
     
     if ano_letivo:
@@ -666,11 +737,11 @@ async def obter_pei(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Obtém um PEI específico com todos os objetivos"""
-    pei = db.query(PEI).filter(PEI.id == pei_id).first()
+    """Obtém um PEI específico com todos os objetivos
     
-    if not pei:
-        raise HTTPException(status_code=404, detail="PEI não encontrado")
+    SEGURANCA: IDOR check.
+    """
+    pei = verificar_acesso_pei(db, pei_id, current_user)
     
     return pei
 
@@ -682,11 +753,11 @@ async def atualizar_pei(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Atualiza dados gerais de um PEI"""
-    pei = db.query(PEI).filter(PEI.id == pei_id).first()
+    """Atualiza dados gerais de um PEI
     
-    if not pei:
-        raise HTTPException(status_code=404, detail="PEI não encontrado")
+    SEGURANCA: IDOR check.
+    """
+    pei = verificar_acesso_pei(db, pei_id, current_user)
     
     # Registrar ajuste se mudou status
     if dados.status and dados.status != pei.status:
@@ -716,11 +787,11 @@ async def excluir_pei(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Exclui um PEI"""
-    pei = db.query(PEI).filter(PEI.id == pei_id).first()
+    """Exclui um PEI
     
-    if not pei:
-        raise HTTPException(status_code=404, detail="PEI não encontrado")
+    SEGURANCA: IDOR check.
+    """
+    pei = verificar_acesso_pei(db, pei_id, current_user)
     
     db.delete(pei)
     db.commit()
@@ -734,11 +805,11 @@ async def ativar_pei(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Ativa um PEI (muda status de rascunho para ativo)"""
-    pei = db.query(PEI).filter(PEI.id == pei_id).first()
+    """Ativa um PEI (muda status de rascunho para ativo)
     
-    if not pei:
-        raise HTTPException(status_code=404, detail="PEI não encontrado")
+    SEGURANCA: IDOR check.
+    """
+    pei = verificar_acesso_pei(db, pei_id, current_user)
     
     # Verificar se tem objetivos
     if not pei.objetivos:
@@ -776,11 +847,11 @@ async def adicionar_objetivo(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Adiciona um novo objetivo ao PEI"""
-    pei = db.query(PEI).filter(PEI.id == pei_id).first()
+    """Adiciona um novo objetivo ao PEI
     
-    if not pei:
-        raise HTTPException(status_code=404, detail="PEI não encontrado")
+    SEGURANCA: IDOR check.
+    """
+    pei = verificar_acesso_pei(db, pei_id, current_user)
     
     # Buscar currículo se tiver código BNCC
     curriculo_id = None
@@ -823,11 +894,11 @@ async def atualizar_objetivo(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Atualiza um objetivo do PEI"""
-    objetivo = db.query(PEIObjetivo).filter(PEIObjetivo.id == objetivo_id).first()
+    """Atualiza um objetivo do PEI
     
-    if not objetivo:
-        raise HTTPException(status_code=404, detail="Objetivo não encontrado")
+    SEGURANCA: IDOR check.
+    """
+    objetivo = verificar_acesso_objetivo_pei(db, objetivo_id, current_user)
     
     # Guardar valor antigo
     old_value = {
@@ -869,11 +940,11 @@ async def excluir_objetivo(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Remove um objetivo do PEI"""
-    objetivo = db.query(PEIObjetivo).filter(PEIObjetivo.id == objetivo_id).first()
+    """Remove um objetivo do PEI
     
-    if not objetivo:
-        raise HTTPException(status_code=404, detail="Objetivo não encontrado")
+    SEGURANCA: IDOR check.
+    """
+    objetivo = verificar_acesso_objetivo_pei(db, objetivo_id, current_user)
     
     # Registrar ajuste
     ajuste = PEIAjuste(
@@ -902,11 +973,11 @@ async def registrar_progresso(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Registra progresso em um objetivo"""
-    objetivo = db.query(PEIObjetivo).filter(PEIObjetivo.id == objetivo_id).first()
+    """Registra progresso em um objetivo
     
-    if not objetivo:
-        raise HTTPException(status_code=404, detail="Objetivo não encontrado")
+    SEGURANCA: IDOR check.
+    """
+    objetivo = verificar_acesso_objetivo_pei(db, objetivo_id, current_user)
     
     # Criar registro de progresso
     log = PEIProgressLog(
@@ -940,7 +1011,12 @@ async def listar_progresso(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Lista histórico de progresso de um objetivo"""
+    """Lista histórico de progresso de um objetivo
+    
+    SEGURANCA: IDOR check.
+    """
+    verificar_acesso_objetivo_pei(db, objetivo_id, current_user)
+    
     logs = db.query(PEIProgressLog).filter(
         PEIProgressLog.goal_id == objetivo_id
     ).order_by(PEIProgressLog.recorded_at.desc()).all()
@@ -958,11 +1034,11 @@ async def obter_resumo_pei(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Obtém resumo do progresso do PEI"""
-    pei = db.query(PEI).filter(PEI.id == pei_id).first()
+    """Obtém resumo do progresso do PEI
     
-    if not pei:
-        raise HTTPException(status_code=404, detail="PEI não encontrado")
+    SEGURANCA: IDOR check.
+    """
+    pei = verificar_acesso_pei(db, pei_id, current_user)
     
     # Calcular estatísticas
     total_objetivos = len(pei.objetivos)
@@ -1026,7 +1102,12 @@ async def obter_historico_ajustes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Lista histórico de ajustes do PEI"""
+    """Lista histórico de ajustes do PEI
+    
+    SEGURANCA: IDOR check.
+    """
+    verificar_acesso_pei(db, pei_id, current_user)
+    
     ajustes = db.query(PEIAjuste).filter(
         PEIAjuste.pei_id == pei_id
     ).order_by(PEIAjuste.adjusted_at.desc()).all()
@@ -1067,6 +1148,7 @@ async def listar_componentes_ano(
 @router.post("/gerar-planejamento-completo/async")
 async def iniciar_geracao_planejamento_completo(
     request: GerarPlanejamentoRequest,
+    http_request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
@@ -1079,11 +1161,15 @@ async def iniciar_geracao_planejamento_completo(
     
     ATENÇÃO: Este processo pode demorar vários minutos dependendo da
     quantidade de habilidades e componentes selecionados.
+    
+    SEGURANCA: rate limited (2/hora - processo MUITO caro) + IDOR check.
     """
-    # Verificar se o aluno existe
-    student = db.query(Student).filter(Student.id == request.student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    check_rate_limit(
+        http_request, key="gerar_planejamento_completo", max_requests=2, window_seconds=3600,
+        error_message="Limite de planejamentos completos atingido (2/hora). Este processo gera centenas de objetivos e e muito caro. Aguarde 1 hora."
+    )
+    
+    verificar_acesso_aluno(db, request.student_id, current_user)
     
     # Criar tarefa
     task_manager = get_task_manager()
@@ -1122,6 +1208,7 @@ async def iniciar_geracao_planejamento_completo(
 @router.post("/gerar-planejamento-completo")
 async def gerar_planejamento_completo_sincrono(
     request: GerarPlanejamentoRequest,
+    http_request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -1131,10 +1218,15 @@ async def gerar_planejamento_completo_sincrono(
     
     ATENÇÃO: Esta operação pode demorar MUITO tempo (vários minutos).
     Para melhor experiência, use o endpoint /async.
+    
+    SEGURANCA: rate limited (2/hora - processo MUITO caro) + IDOR check.
     """
-    student = db.query(Student).filter(Student.id == request.student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    check_rate_limit(
+        http_request, key="gerar_planejamento_completo", max_requests=2, window_seconds=3600,
+        error_message="Limite de planejamentos completos atingido (2/hora). Aguarde 1 hora."
+    )
+    
+    verificar_acesso_aluno(db, request.student_id, current_user)
     
     service = PlanejamentoBNNCCompletoService(db)
     
@@ -1147,8 +1239,11 @@ async def gerar_planejamento_completo_sincrono(
         
         return resultado
         
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Erro ao gerar planejamento completo", extra={"student_id": request.student_id})
+        raise HTTPException(status_code=500, detail="Erro ao gerar planejamento completo. Tente novamente mais tarde.")
 
 
 @router.post("/salvar-planejamento-completo")
@@ -1160,10 +1255,10 @@ async def salvar_planejamento_completo(
     """
     Salva o planejamento COMPLETO como PEI no banco de dados.
     Cria o PEI e TODOS os objetivos (um para cada habilidade da BNCC).
+    
+    SEGURANCA: IDOR check.
     """
-    student = db.query(Student).filter(Student.id == request.student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    verificar_acesso_aluno(db, request.student_id, current_user)
     
     service = PlanejamentoBNNCCompletoService(db)
     
@@ -1182,6 +1277,9 @@ async def salvar_planejamento_completo(
             "total_objetivos": len(pei.objetivos)
         }
         
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Erro ao salvar planejamento completo", extra={"student_id": request.student_id})
+        raise HTTPException(status_code=500, detail="Erro ao salvar planejamento. Tente novamente mais tarde.")

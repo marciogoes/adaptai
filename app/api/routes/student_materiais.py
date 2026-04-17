@@ -2,11 +2,9 @@
 Rotas de Materiais para Estudantes - COM STORAGE
 """
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 from typing import List
-from jose import JWTError
 
 from app.database import get_db
 from app.models.student import Student
@@ -16,51 +14,13 @@ from app.schemas.material import (
     AnotacaoRequest, FavoritoRequest
 )
 from app.services.storage_service import storage_service
-from app.core.security import decode_access_token
-
-# OAuth2 scheme para alunos
-oauth2_scheme_student = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/student/login")
+from app.api.dependencies import get_current_student
 
 router = APIRouter(prefix="/student/materiais", tags=["Student - Materiais"])
 
 
-async def get_current_student(
-    token: str = Depends(oauth2_scheme_student),
-    db: Session = Depends(get_db)
-) -> Student:
-    """Dependency para obter estudante atual do token"""
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate student credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    
-    try:
-        payload = decode_access_token(token)
-        if payload is None:
-            raise credentials_exception
-        
-        email: str = payload.get("sub")
-        if email is None:
-            raise credentials_exception
-        
-        # Verificar se é token de estudante (tem prefixo "student:")
-        if not email.startswith("student:"):
-            raise credentials_exception
-        
-        # Remover prefixo "student:"
-        student_email = email.replace("student:", "")
-        
-    except JWTError:
-        raise credentials_exception
-    
-    # Buscar estudante no banco
-    student = db.query(Student).filter(Student.email == student_email).first()
-    
-    if student is None or not student.is_active:
-        raise credentials_exception
-    
-    return student
+# NOTA: get_current_student agora vem de app.api.dependencies (C4 - centralizado).
+# Antes estava duplicado aqui. Mesma assinatura e comportamento.
 
 
 @router.get("/", response_model=List[MaterialAlunoResponse])

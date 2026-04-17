@@ -27,7 +27,8 @@ from app.schemas.redacao import (
     HistoricoRedacoesResponse
 )
 from app.services.redacao_ai_service import redacao_ai_service
-from app.api.dependencies import get_current_user, oauth2_scheme, get_user_from_token
+from app.api.dependencies import get_current_user, oauth2_scheme, get_user_from_token, verificar_acesso_aluno
+from app.core.pagination import PaginationParams, build_page
 
 router = APIRouter(prefix="/redacoes", tags=["Redações ENEM"])
 
@@ -80,18 +81,18 @@ async def gerar_tema_com_ia(
             db.add(novo_tema)
             db.flush()
             
-            # Associar alunos se fornecidos
+            # Associar alunos se fornecidos (com verificacao de ownership)
             if request.aluno_ids:
+                # SEGURANCA: verifica acesso a TODOS os alunos antes de atribuir (evita IDOR)
                 for aluno_id in request.aluno_ids:
-                    aluno = db.query(Student).filter(Student.id == aluno_id).first()
-                    if aluno:
-                        redacao_aluno = RedacaoAluno(
-                            tema_id=novo_tema.id,
-                            aluno_id=aluno_id,
-                            status=StatusRedacao.RASCUNHO
-                        )
-                        db.add(redacao_aluno)
-                        print(f"   ✓ Tema atribuído ao aluno: {aluno.name}")
+                    aluno = verificar_acesso_aluno(db, aluno_id, current_user)
+                    redacao_aluno = RedacaoAluno(
+                        tema_id=novo_tema.id,
+                        aluno_id=aluno_id,
+                        status=StatusRedacao.RASCUNHO
+                    )
+                    db.add(redacao_aluno)
+                    print(f"   [OK] Tema atribuido ao aluno: {aluno.name}")
             
             db.commit()
             db.refresh(novo_tema)
@@ -101,11 +102,14 @@ async def gerar_tema_com_ia(
         finally:
             db.close()
         
+    except HTTPException:
+        raise
     except Exception as e:
+        # SEGURANCA: nao vazar mensagem de erro interna
         print(f"[ERRO] Erro ao gerar tema: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erro ao gerar tema: {str(e)}"
+            detail="Erro ao gerar tema. Tente novamente."
         )
 
 
@@ -134,9 +138,11 @@ async def criar_tema_manual(
     db.add(novo_tema)
     db.flush()
     
-    # Associar alunos
+    # Associar alunos (com verificacao de ownership)
     if tema_data.aluno_ids:
         for aluno_id in tema_data.aluno_ids:
+            # SEGURANCA: verifica acesso antes de atribuir (evita IDOR)
+            verificar_acesso_aluno(db, aluno_id, current_user)
             redacao_aluno = RedacaoAluno(
                 tema_id=novo_tema.id,
                 aluno_id=aluno_id,
@@ -150,27 +156,63 @@ async def criar_tema_manual(
     return novo_tema
 
 
-@router.get("/temas", response_model=List[TemaListResponse])
+@router.get("/temas")
 def listar_temas(
-    skip: int = 0,
-    limit: int = 50,
+    pagination: PaginationParams = Depends(),
+    skip: int = None,
+    limit: int = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """
-    📋 Listar todos os temas de redação
-    """
-    temas = db.query(TemaRedacao).filter(TemaRedacao.ativo == True).order_by(TemaRedacao.criado_em.desc()).offset(skip).limit(limit).all()
+    Lista temas de redacao (paginado).
     
-    resultado = []
+    Query params preferidos:
+    - page: pagina (default 1)
+    - size: itens por pagina (default 20, max 100)
+    
+    Compatibilidade retroativa:
+    - skip/limit ainda sao aceitos (se enviados, sobrescrevem page/size)
+    
+    Resposta: {items, meta, total, temas} - frontend novo usa items, antigo usa array na raiz
+    """
+    # Compat: se passou skip/limit, calcular page/size equivalentes
+    if skip is not None or limit is not None:
+        real_skip = skip or 0
+        real_limit = min(limit or 50, 100)
+        real_page = (real_skip // real_limit) + 1 if real_limit > 0 else 1
+        # Sobrescrever pagination
+        pagination.page = real_page
+        pagination.size = real_limit
+    
+    query = db.query(TemaRedacao).filter(TemaRedacao.ativo == True).order_by(TemaRedacao.criado_em.desc())
+    
+    total = query.count()
+    temas = query.offset(pagination.offset).limit(pagination.limit).all()
+    
+    # Evitar N+1: calcular contadores em uma query agregada
+    tema_ids = [t.id for t in temas]
+    contadores = {}
+    if tema_ids:
+        rows = (
+            db.query(
+                RedacaoAluno.tema_id,
+                func.count(RedacaoAluno.id).label("total"),
+                func.sum(
+                    func.case((RedacaoAluno.status == StatusRedacao.CORRIGIDA, 1), else_=0)
+                ).label("corrigidas"),
+            )
+            .filter(RedacaoAluno.tema_id.in_(tema_ids))
+            .group_by(RedacaoAluno.tema_id)
+            .all()
+        )
+        for tema_id, total_, corrigidas in rows:
+            contadores[tema_id] = (total_ or 0, int(corrigidas or 0))
+    
+    items = []
     for tema in temas:
-        total_redacoes = db.query(RedacaoAluno).filter(RedacaoAluno.tema_id == tema.id).count()
-        total_corrigidas = db.query(RedacaoAluno).filter(
-            RedacaoAluno.tema_id == tema.id,
-            RedacaoAluno.status == StatusRedacao.CORRIGIDA
-        ).count()
-        
-        resultado.append({
+        total_redacoes, total_corrigidas = contadores.get(tema.id, (0, 0))
+        items.append({
             "id": tema.id,
             "titulo": tema.titulo,
             "area_tematica": tema.area_tematica,
@@ -180,7 +222,10 @@ def listar_temas(
             "total_corrigidas": total_corrigidas
         })
     
-    return resultado
+    page = build_page(items=items, total=total, pagination=pagination)
+    page["total"] = total
+    page["temas"] = items
+    return page
 
 
 @router.get("/temas/{tema_id}", response_model=TemaRedacaoResponse)
@@ -242,10 +287,8 @@ def atribuir_tema_aluno(
     if not tema:
         raise HTTPException(status_code=404, detail="Tema não encontrado")
     
-    # Verificar se aluno existe
-    aluno = db.query(Student).filter(Student.id == aluno_id).first()
-    if not aluno:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    # SEGURANCA: verificar acesso ao aluno (evita IDOR entre escolas)
+    aluno = verificar_acesso_aluno(db, aluno_id, current_user)
     
     # Verificar se já está atribuído
     existe = db.query(RedacaoAluno).filter(

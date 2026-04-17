@@ -18,7 +18,9 @@ import time
 
 from app.database import get_db, SessionLocal
 from app.core.config import settings
-from app.api.dependencies import get_current_active_user
+from app.core.anthropic_client import get_anthropic_client, get_default_model
+from app.api.dependencies import get_current_active_user, verificar_acesso_aluno
+from app.core.pagination import PaginationParams, build_page
 from app.models.user import User
 from app.models.student import Student
 from app.models.relatorio import Relatorio
@@ -33,25 +35,12 @@ from app.schemas.relatorio import (
 
 router = APIRouter(prefix="/relatorios", tags=["Relatórios de Terapias"])
 
-# Cliente Anthropic (inicialização lazy)
-_client = None
+# Modelo para visao (controlado via settings.CLAUDE_MODEL com fallback)
+MODELO_VISAO = get_default_model()
 
-# Modelo que suporta PDFs e imagens
-MODELO_VISAO = "claude-3-5-sonnet-20241022"
-
-# Diretório para salvar relatórios
+# Diretorio para salvar relatorios
 RELATORIOS_DIR = Path(__file__).parent.parent.parent.parent / "storage" / "relatorios"
 RELATORIOS_DIR.mkdir(parents=True, exist_ok=True)
-
-def get_anthropic_client():
-    global _client
-    if _client is None:
-        try:
-            from anthropic import Anthropic
-            _client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        except Exception as e:
-            print(f"[AVISO] Erro ao inicializar Anthropic: {e}")
-    return _client
 
 
 # ============= PROCESSAMENTO EM BACKGROUND =============
@@ -298,22 +287,35 @@ async def listar_arquivos_aluno(
 @router.get("/")
 async def listar_relatorios(
     student_id: Optional[int] = None,
-    skip: int = 0,
-    limit: int = 50,
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Lista todos os relatórios"""
+    """
+    Lista relatorios com paginacao padronizada.
+    
+    Query params:
+    - page: pagina (default 1)
+    - size: itens por pagina (default 20, max 100)
+    - student_id: filtrar por aluno (opcional)
+    
+    Resposta no formato {items, meta} - frontend deve usar response.items.
+    
+    Para compatibilidade retroativa, tambem inclui a chave 'relatorios' espelhando
+    'items' e 'total' no nivel raiz (sera removido em versao futura).
+    """
     query = db.query(Relatorio)
     
     if student_id:
         query = query.filter(Relatorio.student_id == student_id)
     
+    query = query.order_by(Relatorio.created_at.desc())
+    
     total = query.count()
-    relatorios = query.order_by(Relatorio.created_at.desc()).offset(skip).limit(limit).all()
+    relatorios = query.offset(pagination.offset).limit(pagination.limit).all()
     
     # Adicionar dados do JSON
-    result = []
+    items = []
     for r in relatorios:
         dados = r.dados_extraidos
         condicoes = r.condicoes
@@ -354,9 +356,13 @@ async def listar_relatorios(
             "student_name": r.student.name if r.student else None,
             "processando": processando
         }
-        result.append(rel_dict)
+        items.append(rel_dict)
     
-    return {"total": total, "relatorios": result}
+    page = build_page(items=items, total=total, pagination=pagination)
+    # Compat retroativa: manter 'total' e 'relatorios' no nivel raiz
+    page["total"] = total
+    page["relatorios"] = items
+    return page
 
 
 @router.get("/{relatorio_id}/arquivo")
@@ -613,13 +619,13 @@ async def _processar_relatorio_incremental_bg(
     user_id: int
 ):
     """
-    Wrapper assíncrono para processar relatório de forma incremental.
+    Wrapper assincrono para processar relatorio de forma incremental.
     Notifica o frontend via WebSocket a cada etapa.
     """
     try:
-        from anthropic import Anthropic
         from app.services.relatorio_processor import RelatorioProcessorIncremental
-        client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        # Usa cliente Anthropic centralizado
+        client = get_anthropic_client()
         processor = RelatorioProcessorIncremental(client)
         await processor.processar_incremental(
             relatorio_id=relatorio_id,
@@ -629,12 +635,12 @@ async def _processar_relatorio_incremental_bg(
             user_id=user_id
         )
     except Exception as e:
-        print(f"❌ [INCREMENTAL] Erro: {e}")
+        print(f"[INCREMENTAL] Erro: {type(e).__name__}")
         # Notificar erro via WebSocket
         try:
             from app.services.websocket_manager import manager
             await manager.notify_relatorio_progress(
-                user_id, relatorio_id, "error", 0, {"error": str(e)}
+                user_id, relatorio_id, "error", 0, {"error": "Erro no processamento"}
             )
         except:
             pass
@@ -742,3 +748,65 @@ async def upload_e_analisar_rapido(
         "status": "processing",
         "tempo_estimado": "8-15 segundos"
     }
+
+
+# ============================================
+# DOWNLOAD AUTENTICADO DE ARQUIVO DE RELATORIO
+# ============================================
+# CRITICO: substitui o antigo app.mount("/storage/relatorios", ...) que era PUBLICO.
+# Laudos medicos sao dados sensiveis de saude (LGPD art. 11) - precisam de auth + IDOR check.
+
+@router.get("/{relatorio_id}/arquivo")
+async def baixar_arquivo_relatorio(
+    relatorio_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Baixa o arquivo original do relatorio (PDF/imagem do laudo).
+    
+    SEGURANCA: auth + IDOR check. Substitui o mount publico de /storage/relatorios
+    que vazava laudos medicos de alunos.
+    """
+    relatorio = db.query(Relatorio).filter(Relatorio.id == relatorio_id).first()
+    if not relatorio:
+        raise HTTPException(status_code=404, detail="Relatorio nao encontrado")
+    
+    # IDOR: verifica acesso ao aluno dono do laudo
+    verificar_acesso_aluno(db, relatorio.student_id, current_user)
+    
+    if not relatorio.arquivo_path:
+        raise HTTPException(
+            status_code=404,
+            detail="Este relatorio nao tem arquivo associado (sistema antigo)."
+        )
+    
+    # Protecao contra path traversal: arquivo_path so pode ser um nome de arquivo,
+    # sem barras ou .. (o banco deveria armazenar apenas basename).
+    nome_arquivo = Path(relatorio.arquivo_path).name
+    if nome_arquivo != relatorio.arquivo_path or ".." in nome_arquivo:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Tentativa suspeita de path traversal em arquivo_path",
+            extra={"relatorio_id": relatorio_id, "arquivo_path": relatorio.arquivo_path},
+        )
+        raise HTTPException(status_code=400, detail="Arquivo invalido")
+    
+    caminho_absoluto = RELATORIOS_DIR / nome_arquivo
+    
+    # Resolve e valida que continua dentro de RELATORIOS_DIR (defesa em profundidade)
+    try:
+        caminho_resolvido = caminho_absoluto.resolve(strict=True)
+        if not str(caminho_resolvido).startswith(str(RELATORIOS_DIR.resolve())):
+            raise HTTPException(status_code=400, detail="Caminho fora da pasta permitida")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Arquivo nao encontrado no disco")
+    
+    media_type = relatorio.arquivo_tipo or "application/octet-stream"
+    nome_download = relatorio.arquivo_nome or nome_arquivo
+    
+    return FileResponse(
+        path=str(caminho_resolvido),
+        media_type=media_type,
+        filename=nome_download,
+    )

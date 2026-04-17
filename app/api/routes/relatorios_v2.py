@@ -4,7 +4,7 @@ ROTAS DE RELATÓRIOS - VERSÃO ULTRA-RÁPIDA v2.0
 • WebSockets para tempo real
 • Progress bar no frontend
 """
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, WebSocket, WebSocketDisconnect, Query, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError
@@ -36,6 +36,8 @@ from app.schemas.relatorio import (
 # NOVOS IMPORTS
 from app.services.relatorio_processor import processar_relatorio_com_progresso
 from app.services.websocket_manager import ws_manager
+from app.core.security import decode_access_token
+from app.models.user import UserRole
 
 router = APIRouter(prefix="/relatorios", tags=["Relatórios de Terapias"])
 
@@ -46,25 +48,88 @@ RELATORIOS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ============= WEBSOCKET ENDPOINT =============
 
+def _verificar_acesso_relatorio(relatorio_id: int, user_or_student) -> bool:
+    """
+    Verifica se o usuario/aluno autenticado tem acesso ao relatorio.
+    Abre sessao propria, retorna True/False e fecha.
+    """
+    db = SessionLocal()
+    try:
+        rel = db.query(Relatorio).filter(Relatorio.id == relatorio_id).first()
+        if not rel:
+            return False
+        
+        # Se for User (professor/admin)
+        if isinstance(user_or_student, User):
+            if user_or_student.role == UserRole.SUPER_ADMIN:
+                return True
+            # Acesso via escola (admin/coord) ou via aluno criado pelo professor
+            aluno = rel.student
+            if not aluno:
+                return False
+            if user_or_student.role in [UserRole.ADMIN, UserRole.COORDINATOR]:
+                return aluno.escola_id == user_or_student.escola_id
+            # Teacher: so ve relatorios dos alunos que criou
+            return aluno.created_by_user_id == user_or_student.id
+        
+        # Se for Student (aluno logado acessa apenas seu proprio relatorio)
+        if isinstance(user_or_student, Student):
+            return rel.student_id == user_or_student.id
+        
+        return False
+    finally:
+        db.close()
+
+
 @router.websocket("/ws/{relatorio_id}")
 async def websocket_relatorio(
     websocket: WebSocket,
-    relatorio_id: int
+    relatorio_id: int,
+    token: str = Query(..., description="JWT token obtido no login")
 ):
     """
-    WebSocket para receber atualizações em tempo real do processamento
+    WebSocket autenticado para atualizacoes de processamento em tempo real.
     
-    Frontend se conecta aqui e recebe:
-    - {"type": "progress", "progress": 50, "message": "Analisando..."}
-    - {"type": "complete", "progress": 100, "dados": {...}}
-    - {"type": "error", "message": "Erro..."}
+    SEGURANCA: exige token JWT via query parameter (?token=...) antes de aceitar conexao.
+    Verifica se o usuario tem acesso ao relatorio_id antes de conectar.
     """
+    # 1. Validar token
+    payload = decode_access_token(token)
+    if not payload:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Token invalido")
+        return
+    
+    email: str = payload.get("sub", "")
+    if not email:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Token sem subject")
+        return
+    
+    # 2. Buscar usuario/aluno
+    db = SessionLocal()
+    try:
+        if email.startswith("student:"):
+            student_email = email.replace("student:", "")
+            user_or_student = db.query(Student).filter(Student.email == student_email).first()
+        else:
+            user_or_student = db.query(User).filter(User.email == email).first()
+        
+        if not user_or_student or not user_or_student.is_active:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Usuario invalido")
+            return
+    finally:
+        db.close()
+    
+    # 3. Verificar acesso ao relatorio_id
+    if not _verificar_acesso_relatorio(relatorio_id, user_or_student):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Sem acesso a este relatorio")
+        return
+    
+    # 4. Aceitar conexao
     await ws_manager.connect(websocket, relatorio_id)
     
     try:
-        # Manter conexão viva
+        # Manter conexao viva - aguardar mensagens do cliente (ping/pong)
         while True:
-            # Aguardar mensagens do cliente (apenas ping/pong)
             await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, relatorio_id)
@@ -431,11 +496,13 @@ async def upload_e_analisar_relatorio(
     
     print(f"🚀 Processamento ultra-rápido iniciado!")
     
-    # RETORNAR IMEDIATAMENTE com instruções de WebSocket
+    # RETORNAR IMEDIATAMENTE com instrucoes de WebSocket
+    # IMPORTANTE: Frontend DEVE anexar ?token=<jwt> na URL do websocket para autenticar
     return {
         "success": True,
         "relatorio_id": novo_relatorio.id,
         "websocket_url": f"/api/v1/relatorios/ws/{novo_relatorio.id}",
-        "message": "✅ Upload concluído! Conecte-se ao WebSocket para acompanhar o processamento em tempo real.",
+        "websocket_requires_token": True,
+        "message": "Upload concluido! Conecte-se ao WebSocket com ?token=<jwt> para acompanhar o processamento.",
         "tempo_estimado": "8-12 segundos"
     }

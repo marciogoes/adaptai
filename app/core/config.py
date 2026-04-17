@@ -51,7 +51,10 @@ class Settings(BaseSettings):
         return db_url
     
     # Security
-    SECRET_KEY: str = "adaptai-secret-key-change-in-production-2024"
+    # SEGURANCA: sem default em producao. Em dev, se SECRET_KEY nao for setada,
+    # geramos uma aleatoria a cada boot (tokens quebram a cada restart, o que
+    # e bom porque força o dev a setar a variavel).
+    SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 horas
     
@@ -80,8 +83,22 @@ class Settings(BaseSettings):
         # Importante para Railway/Docker
         env_file_encoding = 'utf-8'
 
-# Instancia as configurações
+# Instancia as configuracoes
 settings = Settings()
+
+# SEGURANCA: em dev, se SECRET_KEY nao foi setada, gera uma aleatoria
+# para que tokens nao usem string previsivel. Em prod isso nunca e alcancado
+# porque a validacao abaixo levanta antes.
+if not settings.SECRET_KEY:
+    if settings.ENVIRONMENT == "production":
+        raise RuntimeError(
+            "FATAL: SECRET_KEY nao configurada em producao. "
+            "Gere uma nova com: python -c \"import secrets; print(secrets.token_hex(32))\" "
+            "e configure no Railway."
+        )
+    import secrets as _secrets
+    settings.SECRET_KEY = _secrets.token_hex(32)
+    print("[CONFIG] SECRET_KEY nao definida - gerada aleatoriamente para esta sessao de desenvolvimento.")
 
 # Debug: mostra quais variáveis foram carregadas (apenas em produção para debug)
 if settings.ENVIRONMENT == "production":
@@ -110,6 +127,26 @@ if settings.ENVIRONMENT == "production":
             "Configure no Railway/Render/Docker antes de fazer deploy!"
         )
     
-    # Verifica SECRET_KEY
-    if not settings.SECRET_KEY or settings.SECRET_KEY == "adaptai-secret-key-change-in-production-2024":
-        print("⚠️  WARNING: Configure SECRET_KEY única em produção!")
+    # Verifica SECRET_KEY - FATAL em producao se ainda for o default antigo ou curta
+    SECRET_KEY_DEFAULT_LEGACY = "adaptai-secret-key-change-in-production-2024"
+    if not settings.SECRET_KEY or settings.SECRET_KEY == SECRET_KEY_DEFAULT_LEGACY:
+        raise RuntimeError(
+            "FATAL: SECRET_KEY padrao detectada em producao. "
+            "Configure SECRET_KEY unica no Railway antes do deploy. "
+            "Gere uma nova com: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+    
+    # Verifica ANTHROPIC_API_KEY - FATAL em producao se vazia
+    if not settings.ANTHROPIC_API_KEY or not settings.ANTHROPIC_API_KEY.strip():
+        raise RuntimeError(
+            "FATAL: ANTHROPIC_API_KEY nao configurada em producao. "
+            "Configure no Railway antes do deploy."
+        )
+    
+    # Verifica se SECRET_KEY tem tamanho minimo aceitavel (hex de 32 bytes = 64 chars)
+    if len(settings.SECRET_KEY) < 32:
+        raise RuntimeError(
+            "FATAL: SECRET_KEY muito curta (minimo 32 caracteres, recomendado 64). "
+            "Gere uma nova com: python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+

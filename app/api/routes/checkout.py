@@ -1,22 +1,21 @@
 # ============================================
 # ROTAS DE CHECKOUT / ONBOARDING - AdaptAI
 # ============================================
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from passlib.context import CryptContext
 from app.database import get_db
 from app.models.escola import Escola, ConfiguracaoEscola
 from app.models.user import User, UserRole
 from app.models.plano import Plano
 from app.models.assinatura import Assinatura
 from app.core.config import settings
-from app.core.security import create_access_token
+from app.core.security import create_access_token, get_password_hash
+from app.core.rate_limit import check_rate_limit
 from app.schemas.multitenant import CheckoutRequest, CheckoutResponse, StatusAssinatura
+from pydantic import BaseModel, EmailStr
 
 router = APIRouter(prefix="/checkout", tags=["🛒 Checkout"])
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def criar_token_acesso(user_id: int, email: str) -> str:
@@ -30,19 +29,30 @@ def criar_token_acesso(user_id: int, email: str) -> str:
 @router.post("/iniciar", response_model=CheckoutResponse)
 async def iniciar_checkout(
     dados: CheckoutRequest,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """
     🚀 Inicia o processo de checkout (cria escola + admin + trial)
     
+    SEGURANCA: rate limited a 3 tentativas por hora por IP, para evitar spam.
+    
     Este endpoint cria:
     1. A escola (tenant)
-    2. O usuário administrador
+    2. O usuario administrador
     3. A assinatura em modo TRIAL (14 dias)
-    4. As configurações padrão da escola
+    4. As configuracoes padrao da escola
     
-    Retorna um token JWT para login automático.
+    Retorna um token JWT para login automatico.
     """
+    # SEGURANCA: limitar criacao de escolas a 3 por hora por IP
+    check_rate_limit(
+        request,
+        key="checkout_iniciar",
+        max_requests=3,
+        window_seconds=3600,
+        error_message="Muitas tentativas de cadastro. Aguarde 1 hora."
+    )
     
     # 1. Verifica se o plano existe
     plano = db.query(Plano).filter(
@@ -96,8 +106,8 @@ async def iniciar_checkout(
         db.add(escola)
         db.flush()  # Para obter o ID
         
-        # 5. Cria o usuário administrador
-        hashed_password = pwd_context.hash(dados.admin_senha)
+        # 5. Cria o usuario administrador (usando helper centralizado - mesmo hash do login)
+        hashed_password = get_password_hash(dados.admin_senha)
         
         usuario = User(
             name=dados.admin_nome,
@@ -162,45 +172,121 @@ async def iniciar_checkout(
             token=token
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
+        # SEGURANCA: nao vazar detalhes internos ao cliente
+        print(f"[CHECKOUT ERRO] {type(e).__name__}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erro ao criar conta: {str(e)}"
+            detail="Erro ao criar conta. Tente novamente em alguns minutos."
         )
 
 
-@router.get("/verificar-email/{email}")
+# ============================================
+# Schemas para endpoints de verificacao (POST - dados nao vazam em logs de URL)
+# ============================================
+
+class VerificarEmailRequest(BaseModel):
+    email: EmailStr
+
+
+class VerificarCnpjRequest(BaseModel):
+    cnpj: str
+
+
+@router.post("/verificar-email")
 async def verificar_email_disponivel(
-    email: str,
+    payload: VerificarEmailRequest,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """
-    ✉️ Verifica se um email está disponível para cadastro
+    ✉️ Verifica se um email esta disponivel para cadastro.
+    
+    SEGURANCA: trocado de GET para POST para evitar vazamento de email
+    em logs de servidor, proxy e browser history.
+    Tambem rate limited para evitar enumeracao (harvesting de emails).
     """
-    usuario = db.query(User).filter(User.email == email).first()
+    check_rate_limit(
+        request, key="verificar_email", max_requests=10, window_seconds=60,
+        error_message="Muitas verificacoes. Aguarde um momento."
+    )
+    
+    usuario = db.query(User).filter(User.email == payload.email).first()
     
     return {
-        "email": email,
         "disponivel": usuario is None,
-        "mensagem": "Email disponível" if not usuario else "Email já cadastrado"
+        "mensagem": "Email disponivel" if not usuario else "Email ja cadastrado"
     }
 
 
-@router.get("/verificar-cnpj/{cnpj}")
+@router.post("/verificar-cnpj")
 async def verificar_cnpj_disponivel(
-    cnpj: str,
+    payload: VerificarCnpjRequest,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """
-    🏢 Verifica se um CNPJ está disponível para cadastro
-    """
-    escola = db.query(Escola).filter(Escola.cnpj == cnpj).first()
+    🏢 Verifica se um CNPJ esta disponivel para cadastro.
     
+    SEGURANCA: trocado de GET para POST pelos mesmos motivos de privacidade.
+    """
+    check_rate_limit(
+        request, key="verificar_cnpj", max_requests=10, window_seconds=60,
+        error_message="Muitas verificacoes. Aguarde um momento."
+    )
+    
+    escola = db.query(Escola).filter(Escola.cnpj == payload.cnpj).first()
+    
+    return {
+        "disponivel": escola is None,
+        "mensagem": "CNPJ disponivel" if not escola else "CNPJ ja cadastrado"
+    }
+
+
+# NOTA: Endpoints GET legados mantidos abaixo para nao quebrar frontend ja deployado.
+# Remover em proxima versao apos atualizar frontend para usar os POSTs acima.
+
+@router.get("/verificar-email/{email}", deprecated=True)
+async def verificar_email_disponivel_legacy(
+    email: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    DEPRECATED: Use POST /verificar-email.
+    Este endpoint sera removido em versao futura por razoes de privacidade (LGPD).
+    """
+    check_rate_limit(
+        request, key="verificar_email_legacy", max_requests=10, window_seconds=60
+    )
+    usuario = db.query(User).filter(User.email == email).first()
+    return {
+        "email": email,
+        "disponivel": usuario is None,
+        "mensagem": "Email disponivel" if not usuario else "Email ja cadastrado"
+    }
+
+
+@router.get("/verificar-cnpj/{cnpj}", deprecated=True)
+async def verificar_cnpj_disponivel_legacy(
+    cnpj: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    DEPRECATED: Use POST /verificar-cnpj.
+    """
+    check_rate_limit(
+        request, key="verificar_cnpj_legacy", max_requests=10, window_seconds=60
+    )
+    escola = db.query(Escola).filter(Escola.cnpj == cnpj).first()
     return {
         "cnpj": cnpj,
         "disponivel": escola is None,
-        "mensagem": "CNPJ disponível" if not escola else "CNPJ já cadastrado"
+        "mensagem": "CNPJ disponivel" if not escola else "CNPJ ja cadastrado"
     }
 
 

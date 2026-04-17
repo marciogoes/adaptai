@@ -1,5 +1,5 @@
 """
-Processador Incremental de Relatórios
+Processador Incremental de Relatorios
 Analisa PDFs em etapas e notifica progresso em tempo real
 """
 import base64
@@ -8,18 +8,21 @@ from pathlib import Path
 from datetime import datetime
 import hashlib
 import asyncio
+from typing import Callable, Awaitable, Optional
 
 from app.database import SessionLocal
 from app.models.relatorio import Relatorio
 from app.services.websocket_manager import manager
+from app.core.config import settings
 
 
 class RelatorioProcessorIncremental:
-    """Processa relatórios em etapas, notificando progresso"""
+    """Processa relatorios em etapas, notificando progresso"""
     
-    def __init__(self, anthropic_client, modelo="claude-sonnet-4-20250514"):
+    def __init__(self, anthropic_client, modelo=None):
         self.client = anthropic_client
-        self.modelo = modelo
+        # Modelo valido - antes estava com 'claude-sonnet-4-20250514' que nao existe
+        self.modelo = modelo or settings.CLAUDE_MODEL or "claude-3-5-sonnet-20241022"
     
     async def processar_incremental(
         self,
@@ -298,7 +301,96 @@ APENAS JSON, sem explicações."""
             db.commit()
             
         except Exception as e:
-            print(f"❌ Erro ao atualizar banco: {e}")
+            print(f"[ERRO] Atualizar banco: {e}")
             db.rollback()
         finally:
             db.close()
+
+
+# ============================================
+# FUNCAO STANDALONE - usada por relatorios_v2.py
+# ============================================
+# API esperada:
+#   dados = await processar_relatorio_com_progresso(pdf_path, api_key, progress_callback)
+# onde progress_callback e uma corotina assinatura (progress: int, message: str) -> None
+
+async def processar_relatorio_com_progresso(
+    pdf_path: Path,
+    api_key: str,
+    progress_callback: Optional[Callable[[int, str], Awaitable[None]]] = None
+) -> dict:
+    """
+    Processa um PDF de relatorio extraindo informacoes estruturadas com IA.
+    Envia progresso via progress_callback async.
+    
+    Retorna um dict consolidado com:
+    - tipo_laudo, profissional (dict)
+    - datas (dict com emissao/validade)
+    - diagnosticos (list), condicoes_identificadas (dict)
+    - resumo_clinico (str)
+    - recomendacoes (list), adaptacoes_sugeridas (dict)
+    """
+    from anthropic import Anthropic
+    
+    async def _notify(progress: int, message: str):
+        if progress_callback:
+            try:
+                await progress_callback(progress, message)
+            except Exception as e:
+                print(f"[WARN] Progress callback falhou: {e}")
+    
+    # Determinar content_type pela extensao
+    ext = pdf_path.suffix.lower()
+    content_type_map = {
+        ".pdf": "application/pdf",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }
+    content_type = content_type_map.get(ext, "application/pdf")
+    
+    await _notify(5, "Carregando arquivo...")
+    
+    # Ler arquivo
+    with open(pdf_path, "rb") as f:
+        file_content = f.read()
+    file_base64 = base64.standard_b64encode(file_content).decode("utf-8")
+    
+    await _notify(10, "Inicializando IA...")
+    
+    # Cliente Anthropic
+    client = Anthropic(api_key=api_key)
+    processor = RelatorioProcessorIncremental(client)
+    media_type = processor._get_media_type(content_type)
+    
+    # Processar em 4 etapas em paralelo (mais rapido que sequencial)
+    await _notify(20, "Extraindo dados do profissional...")
+    
+    # Executar as 4 extracoes em paralelo
+    try:
+        results = await asyncio.gather(
+            processor._extrair_profissional(file_base64, media_type, content_type),
+            processor._extrair_diagnosticos(file_base64, media_type, content_type),
+            processor._extrair_resumo(file_base64, media_type, content_type),
+            processor._extrair_recomendacoes(file_base64, media_type, content_type),
+            return_exceptions=True
+        )
+    except Exception as e:
+        await _notify(0, f"Erro na extracao: {e}")
+        raise
+    
+    await _notify(80, "Consolidando resultados...")
+    
+    # Consolidar (ignorando extracoes que falharam)
+    profissional_data, diagnostico_data, resumo_data, recomendacoes_data = results
+    dados_completos = {}
+    for r in results:
+        if isinstance(r, dict):
+            dados_completos.update(r)
+        elif isinstance(r, Exception):
+            print(f"[WARN] Extracao parcial falhou: {r}")
+    
+    await _notify(100, "Processamento concluido!")
+    return dados_completos
+

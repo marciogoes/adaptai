@@ -1,18 +1,19 @@
 """
-📝 AdaptAI - Serviço de IA para Redações ENEM
-Geração de temas atuais e correção por competências
+📝 AdaptAI - Servico de IA para Redacoes ENEM
+Geracao de temas atuais e correcao por competencias.
+
+Usa cliente Anthropic centralizado (core/anthropic_client.py).
 """
 import os
 import json
 import re
 from datetime import datetime
 from typing import Dict, List, Any, Optional
-from anthropic import Anthropic
-from app.core.config import settings
+from app.core.anthropic_client import get_anthropic_client, get_default_model
 
-# Inicializar cliente Anthropic
-anthropic_client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-_MODELO_IA = settings.CLAUDE_MODEL or "claude-3-5-sonnet-20241022"
+# NOTA: antes este modulo instanciava Anthropic() em module-level, o que causava
+# erro na importacao se ANTHROPIC_API_KEY nao estivesse setada ainda.
+# Agora usamos o singleton lazy via get_anthropic_client().
 
 
 class RedacaoAIService:
@@ -149,8 +150,8 @@ IMPORTANTE:
 """
 
         try:
-            response = anthropic_client.messages.create(
-                model=_MODELO_IA,
+            response = get_anthropic_client().messages.create(
+                model=get_default_model(),
                 max_tokens=2000,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -264,8 +265,8 @@ IMPORTANTE:
 """
 
         try:
-            response = anthropic_client.messages.create(
-                model=_MODELO_IA,
+            response = get_anthropic_client().messages.create(
+                model=get_default_model(),
                 max_tokens=3000,
                 messages=[{"role": "user", "content": prompt}]
             )

@@ -18,6 +18,7 @@ from app.schemas.material import (
     MaterialAlunoResponse, AnotacaoRequest, FavoritoRequest
 )
 from app.api.dependencies import get_current_active_user
+from app.core.pagination import PaginationParams, build_page
 from app.services.material_service import material_service
 from app.services.storage_service import storage_service
 
@@ -258,19 +259,31 @@ async def criar_material(
     return novo_material
 
 
-@router.get("/", response_model=List[MaterialListResponse])
+@router.get("/")
 async def listar_materiais(
     tipo: str = None,
     materia: str = None,
+    pagination: PaginationParams = Depends(),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """
-    Lista todos os materiais criados pelo professor
+    Lista materiais criados pelo professor com paginacao.
     
-    Filtros opcionais:
-    - tipo: 'visual' ou 'mapa_mental'
-    - materia: nome da matéria
+    Query params:
+    - page: pagina (default 1)
+    - size: itens por pagina (default 20, max 100)
+    - tipo: 'visual' ou 'mapa_mental' (opcional)
+    - materia: nome da materia (opcional)
+    
+    Retorna:
+    {
+        "items": [...materiais...],
+        "meta": {"page": 1, "size": 20, "total": 150, "total_pages": 8, ...}
+    }
+    
+    IMPORTANTE: Endpoint mudou para formato paginado. Frontend antigo que espera
+    array puro precisa acessar response.items ao inves de response direto.
     """
     query = db.query(Material).filter(Material.criado_por_id == current_user.id)
     
@@ -280,12 +293,15 @@ async def listar_materiais(
     if materia:
         query = query.filter(Material.materia == materia)
     
-    materiais = query.order_by(Material.criado_em.desc()).limit(50).all()
+    query = query.order_by(Material.criado_em.desc())
     
-    # Adicionar total de alunos
-    resultado = []
+    total = query.count()
+    materiais = query.offset(pagination.offset).limit(pagination.limit).all()
+    
+    # Serializar com total de alunos (eager-load relationship evita N+1)
+    items = []
     for material in materiais:
-        material_dict = {
+        items.append({
             "id": material.id,
             "titulo": material.titulo,
             "descricao": material.descricao,
@@ -294,11 +310,10 @@ async def listar_materiais(
             "serie_nivel": material.serie_nivel,
             "status": material.status,
             "criado_em": material.criado_em,
-            "total_alunos": len(material.materiais_alunos)
-        }
-        resultado.append(material_dict)
+            "total_alunos": len(material.materiais_alunos),
+        })
     
-    return resultado
+    return build_page(items=items, total=total, pagination=pagination)
 
 
 @router.get("/{material_id}", response_model=MaterialResponse)

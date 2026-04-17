@@ -29,3 +29,6 @@ PyMuPDF==1.24.0
 
 # Producao
 gunicorn==21.2.0
+
+# Rate limiter - backend opcional (se REDIS_URL nao for definido, usa memoria)
+redis>=5.0.0

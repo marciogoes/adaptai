@@ -6,10 +6,15 @@
 
 from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, Enum, ForeignKey, Float
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 import enum
 
 from app.database import Base
+
+
+# Helper para defaults timezone-aware
+def _utcnow():
+    return datetime.now(timezone.utc)
 
 
 class JobStatus(str, enum.Enum):
@@ -53,20 +58,20 @@ class PlanejamentoJob(Base):
     
     # Resultado final
     resultado_final = Column(JSON)
-    pei_id = Column(Integer, ForeignKey("pei.id"), nullable=True)  # PEI criado ao final
+    pei_id = Column(Integer, ForeignKey("peis.id"), nullable=True)  # PEI criado ao final
     
     # Controle de erros
     tentativas = Column(Integer, default=0)
     ultimo_erro = Column(Text)
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
     started_at = Column(DateTime)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
     completed_at = Column(DateTime)
     
     # Heartbeat - para detectar jobs travados
-    last_heartbeat = Column(DateTime, default=datetime.utcnow)
+    last_heartbeat = Column(DateTime, default=_utcnow)
     heartbeat_count = Column(Integer, default=0)
     
     # Controle de concorrência

@@ -1,11 +1,17 @@
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from pathlib import Path
 from app.core.config import settings
+from app.core.logging_config import setup_logging, get_logger
 from app.database import engine, Base
+
+# Configurar logging antes de qualquer outro import que possa logar
+setup_logging(level="INFO")
+logger = get_logger(__name__)
 
 # Importar TODOS os modelos para o SQLAlchemy criar as tabelas
 from app.models import *  # Isso importa todos os modelos
@@ -37,17 +43,91 @@ from app.api.routes import redacoes  # REDAÇÕES ENEM COM IA
 from app.api.routes import checkout  # CHECKOUT / ONBOARDING DE NOVAS ESCOLAS
 from app.api.routes import relatorios_v2  # RELATÓRIOS V2 - UPLOAD ULTRA-RÁPIDO COM WEBSOCKET
 from app.api.routes import websocket  # WEBSOCKET - NOTIFICAÇÕES EM TEMPO REAL
+from app.api.routes import admin_monitoring  # ADMIN - MONITORAMENTO (cache IA, background tasks)
 
-# Criar tabelas
-Base.metadata.create_all(bind=engine)
+# Criar tabelas APENAS em dev. Em producao, o schema e versionado via Alembic
+# e NAO deve ser alterado pelo app no startup - rodar create_all em prod mascara
+# schema drift, pode recriar indices silenciosamente e e uma pegadinha classica
+# em incidentes ("por que a tabela X voltou?"). Ver docs/migrations.md.
+if not bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION")):
+    Base.metadata.create_all(bind=engine)
+    logger.info("Base.metadata.create_all executado (dev)")
+else:
+    logger.info("Pulando create_all em producao - use Alembic para migrations")
+
+# ============================================
+# LIFESPAN (startup + shutdown) - substitui @app.on_event deprecado
+# ============================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # ========== STARTUP ==========
+    IS_PRODUCTION_STARTUP = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION"))
+    logger.info(
+        "AdaptAI backend starting",
+        extra={
+            "version": settings.VERSION,
+            "ai_model": settings.CLAUDE_MODEL,
+            "production": IS_PRODUCTION_STARTUP,
+        },
+    )
+    
+    # Cleanup de jobs travados no startup
+    try:
+        from app.database import SessionLocal
+        from sqlalchemy import text
+        from datetime import datetime, timezone, timedelta
+        
+        db = SessionLocal()
+        try:
+            # Buscar e marcar jobs travados (usa timezone-aware datetime)
+            timeout = datetime.now(timezone.utc) - timedelta(minutes=5)
+            result = db.execute(text("""
+                UPDATE planejamento_jobs 
+                SET status = 'failed',
+                    ultimo_erro = 'Job travado - cleanup no startup',
+                    completed_at = NOW()
+                WHERE status = 'processing'
+                AND (
+                    last_heartbeat < :timeout
+                    OR last_heartbeat IS NULL
+                    OR updated_at < :timeout
+                )
+            """), {"timeout": timeout})
+            db.commit()
+            
+            if result.rowcount > 0:
+                logger.warning(
+                    "Jobs travados marcados como FAILED no startup",
+                    extra={"count": result.rowcount},
+                )
+            else:
+                logger.info("Nenhum job travado encontrado")
+        finally:
+            db.close()
+    except Exception as e:
+        logger.warning("Erro no cleanup de jobs travados", exc_info=True)
+    
+    # Cleanup de background_tasks antigos (E2 - mantem so ultimos 7 dias)
+    try:
+        from app.services.background_tasks import task_manager
+        task_manager.cleanup_old_tasks()
+    except Exception as e:
+        logger.warning("Erro no cleanup de background_tasks", exc_info=True)
+    
+    yield
+    
+    # ========== SHUTDOWN ==========
+    logger.info("AdaptAI backend shutting down")
+
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.VERSION,
     description="""
-    🎓 **AdaptAI API - Sistema de Educação Inclusiva com IA**
+    🎓 **AdaptAI API - Sistema de Educacao Inclusiva com IA**
     
-    Sistema inteligente para geração automática de provas e questões adaptadas.
+    Sistema inteligente para geracao automatica de provas e questoes adaptadas.
     """,
     contact={
         "name": "AdaptAI Team",
@@ -55,15 +135,16 @@ app = FastAPI(
     },
     license_info={
         "name": "MIT",
-    }
+    },
+    lifespan=lifespan,
 )
 
 # ============================================
-# CORS - Configuração robusta para produção
+# CORS - Configuracao robusta para producao
 # ============================================
 
-ALLOWED_ORIGINS = [
-    "https://adaptai-frontend.vercel.app",
+# Origens permitidas em desenvolvimento
+ALLOWED_ORIGINS_DEV = [
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:5174",
@@ -76,32 +157,114 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:5174",
 ]
 
-IS_PRODUCTION = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION")
+# Origens permitidas em producao.
+# SEGURANCA: lista FECHADA. Adicione aqui os dominios reais de frontend.
+# Tambem aceita FRONTEND_URL via env var para flexibilidade em multi-deploy.
+ALLOWED_ORIGINS_PROD = [
+    "https://adaptai-frontend.vercel.app",
+    # Adicione outros dominios de producao aqui se houver (dominio proprio, staging, etc)
+]
+
+# Permitir adicionar origem extra via env var (ex: dominio proprio)
+_extra_origin = os.getenv("FRONTEND_URL")
+if _extra_origin:
+    ALLOWED_ORIGINS_PROD.append(_extra_origin.strip())
+
+IS_PRODUCTION = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("PRODUCTION"))
 
 if IS_PRODUCTION:
-    print("[CORS] Modo de produção - permitindo todas origens")
-    origins = ["*"]
+    origins = ALLOWED_ORIGINS_PROD
+    print(f"[CORS] Modo producao - origens permitidas: {origins}")
 else:
-    origins = ALLOWED_ORIGINS
+    origins = ALLOWED_ORIGINS_DEV + ALLOWED_ORIGINS_PROD
+    print(f"[CORS] Modo desenvolvimento - origens permitidas: {origins}")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True if not IS_PRODUCTION else False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_credentials=True,  # consistente em dev e prod (nao trocar para False)
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
+    expose_headers=["Content-Disposition", "X-Request-ID"],
     max_age=86400,
 )
 
-@app.options("/{rest_of_path:path}")
-async def preflight_handler(request: Request, rest_of_path: str):
-    response = JSONResponse(content={"status": "ok"})
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    response.headers["Access-Control-Max-Age"] = "86400"
-    return response
+# Preflight OPTIONS eh tratado automaticamente pelo CORSMiddleware.
+# NAO adicionar handler manual aqui - ele sobrescreve a configuracao segura do CORS.
+
+
+# ============================================
+# Middleware de request tracking (observabilidade)
+# ============================================
+# Gera request_id unico por request e loga duracao/status.
+# Util para debugar "o que aconteceu naquele request?" rastreando logs pelo X-Request-ID.
+
+import uuid
+import time
+from starlette.middleware.base import BaseHTTPMiddleware
+
+
+class RequestTrackingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Aceita X-Request-ID do cliente (permite rastreio ponta-a-ponta) ou gera um
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())[:8]
+        request.state.request_id = request_id
+        
+        start = time.perf_counter()
+        
+        # Evita logar rotas de health/static (poluicao)
+        path = request.url.path
+        is_noisy = path in ("/health", "/", "/favicon.ico") or path.startswith("/storage/")
+        
+        try:
+            response = await call_next(request)
+            duration_ms = round((time.perf_counter() - start) * 1000, 1)
+            response.headers["X-Request-ID"] = request_id
+            
+            # Log apenas requests interessantes (nao health checks)
+            if not is_noisy:
+                log_level = logger.warning if response.status_code >= 500 else (
+                    logger.info if response.status_code >= 400 else logger.debug
+                )
+                log_level(
+                    "request processed",
+                    extra={
+                        "request_id": request_id,
+                        "method": request.method,
+                        "path": path,
+                        "status": response.status_code,
+                        "duration_ms": duration_ms,
+                    },
+                )
+            return response
+        except Exception:
+            duration_ms = round((time.perf_counter() - start) * 1000, 1)
+            logger.error(
+                "request failed with exception",
+                extra={
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": path,
+                    "duration_ms": duration_ms,
+                },
+                exc_info=True,
+            )
+            raise
+
+
+app.add_middleware(RequestTrackingMiddleware)
+
+
+# ============================================
+# Security headers middleware
+# ============================================
+# Aplica headers conservadores em todas as respostas: X-Content-Type-Options,
+# Referrer-Policy, Permissions-Policy, X-Frame-Options (seletivo), e HSTS em
+# producao. Ver app/core/security_headers.py para detalhes.
+
+from app.core.security_headers import SecurityHeadersMiddleware
+app.add_middleware(SecurityHeadersMiddleware, is_production=IS_PRODUCTION)
+
 
 # ============================================
 # Storage para arquivos estáticos
@@ -111,9 +274,13 @@ storage_materiais_path = Path(__file__).parent.parent / "storage" / "materiais"
 storage_materiais_path.mkdir(parents=True, exist_ok=True)
 app.mount("/storage/materiais", StaticFiles(directory=str(storage_materiais_path)), name="materiais_storage")
 
+# ATENÇÃO: /storage/relatorios NÃO é mais montado como estático.
+# Laudos médicos sao dados sensiveis de saude (LGPD art. 11).
+# Acesso agora via endpoint autenticado: GET /api/v1/relatorios/{id}/arquivo
+# (ver app/api/routes/relatorios.py::baixar_arquivo_relatorio)
 storage_relatorios_path = Path(__file__).parent.parent / "storage" / "relatorios"
 storage_relatorios_path.mkdir(parents=True, exist_ok=True)
-app.mount("/storage/relatorios", StaticFiles(directory=str(storage_relatorios_path)), name="relatorios_storage")
+# NAO montar StaticFiles aqui - usar endpoint autenticado.
 
 storage_registros_path = Path(__file__).parent.parent / "storage" / "registros_diarios"
 storage_registros_path.mkdir(parents=True, exist_ok=True)
@@ -151,6 +318,7 @@ app.include_router(redacoes.router, prefix="/api/v1", tags=["✍️ Redações E
 app.include_router(checkout.router, prefix="/api/v1", tags=["🛒 Checkout"])
 app.include_router(relatorios_v2.router, prefix="/api/v1", tags=["📋 Relatórios V2 Ultra-Rápido"])
 app.include_router(websocket.router, prefix="/api/v1", tags=["🔌 WebSocket"])
+app.include_router(admin_monitoring.router, prefix="/api/v1", tags=["⚙️ Admin Monitoring"])
 
 # ============================================
 # Rotas principais
@@ -167,59 +335,21 @@ def root():
 
 @app.get("/health", tags=["Health"])
 def health_check():
-    return {"status": "healthy", "service": "AdaptAI Backend", "version": settings.VERSION}
+    # Expor backend do rate limiter em dev; em prod, so se DEBUG=true.
+    try:
+        from app.core.rate_limit import get_active_backend_name
+        rl_backend = get_active_backend_name()
+    except Exception:
+        rl_backend = "unknown"
+    payload = {"status": "healthy", "service": "AdaptAI Backend", "version": settings.VERSION}
+    if not IS_PRODUCTION or settings.DEBUG:
+        payload["rate_limit_backend"] = rl_backend
+    return payload
 
 @app.get("/info", tags=["Info"])
 def info():
     return {"name": settings.APP_NAME, "version": settings.VERSION, "production": bool(IS_PRODUCTION)}
 
-@app.on_event("startup")
-async def startup_event():
-    print("="*60)
-    print("[ADAPTAI] Backend Starting...")
-    print(f"[VERSION] {settings.VERSION}")
-    print(f"[AI MODEL] {settings.CLAUDE_MODEL}")
-    print(f"[PRODUCTION] {bool(IS_PRODUCTION)}")
-    print("="*60)
-    
-    # Cleanup de jobs travados no startup
-    try:
-        from app.services.job_protection_service import cleanup_stuck_jobs
-        from app.database import SessionLocal
-        from sqlalchemy.ext.asyncio import AsyncSession
-        import asyncio
-        
-        # Usar sessão síncrona para cleanup
-        db = SessionLocal()
-        try:
-            from sqlalchemy import text
-            from datetime import datetime, timedelta
-            
-            # Buscar e marcar jobs travados
-            timeout = datetime.utcnow() - timedelta(minutes=5)
-            result = db.execute(text("""
-                UPDATE planejamento_jobs 
-                SET status = 'failed',
-                    ultimo_erro = 'Job travado - cleanup no startup',
-                    completed_at = NOW()
-                WHERE status = 'processing'
-                AND (
-                    last_heartbeat < :timeout
-                    OR last_heartbeat IS NULL
-                    OR updated_at < :timeout
-                )
-            """), {"timeout": timeout})
-            db.commit()
-            
-            if result.rowcount > 0:
-                print(f"[CLEANUP] {result.rowcount} jobs travados marcados como FAILED")
-            else:
-                print("[CLEANUP] Nenhum job travado encontrado")
-        finally:
-            db.close()
-    except Exception as e:
-        print(f"[CLEANUP] Erro no cleanup (não crítico): {e}")
+# NOTA: Eventos on_event (startup/shutdown) foram migrados para 'lifespan' no topo do arquivo.
+# Ver https://fastapi.tiangolo.com/advanced/events/ para documentacao.
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    print("[ADAPTAI] Backend Shutting down...")

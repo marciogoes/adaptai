@@ -2,14 +2,16 @@
 Rotas para Geração de Materiais Adaptados
 VERSÃO MEGA COMPLETA: 25+ tipos de materiais
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 import time
 
 from app.database import get_db
-from app.api.dependencies import get_current_active_user
+from app.api.dependencies import get_current_active_user, verificar_acesso_aluno
+from app.core.rate_limit import check_rate_limit
+from app.core.pagination import PaginationParams, build_page
 from app.models.user import User
 from app.models.student import Student
 from app.models.material_adaptado_gerado import MaterialAdaptadoGerado
@@ -86,27 +88,34 @@ TIPOS_MATERIAIS = {
 
 @router.post("/gerar")
 async def gerar_materiais_adaptados(
-    request: MaterialRequest,
+    request_body: MaterialRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     """
     🎨 GERA MATERIAIS EDUCACIONAIS ADAPTADOS
     
-    25+ tipos disponíveis! A série é obtida automaticamente do aluno.
+    25+ tipos disponiveis! A serie e obtida automaticamente do aluno.
+    
+    SEGURANCA: rate limited a 20 geracoes por hora por IP 
+    (cada geracao pode fazer ate 25 chamadas caras a API Claude).
     """
+    # SEGURANCA: limitar gastos com IA por IP
+    check_rate_limit(
+        request, key="gerar_material_adaptado", max_requests=20, window_seconds=3600,
+        error_message="Limite de geracoes de IA atingido. Aguarde 1 hora."
+    )
     
     inicio = time.time()
     
-    # Buscar aluno
-    student = db.query(Student).filter(Student.id == request.student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    # SEGURANCA: verificar acesso ao aluno (evita IDOR entre escolas)
+    student = verificar_acesso_aluno(db, request_body.student_id, current_user)
     
-    # Série: usar do aluno se não informada
-    serie = request.serie or student.grade_level or "Não especificada"
+    # Serie: usar do aluno se nao informada
+    serie = request_body.serie or student.grade_level or "Nao especificada"
     
-    # Extrair diagnósticos do aluno
+    # Extrair diagnosticos do aluno
     diagnosticos = {}
     if student.diagnosis:
         diag = student.diagnosis
@@ -132,38 +141,39 @@ async def gerar_materiais_adaptados(
         "success": True,
         "student_name": student.name,
         "student_serie": serie,
-        "disciplina": request.disciplina,
-        "conteudo": request.conteudo,
+        "disciplina": request_body.disciplina,
+        "conteudo": request_body.conteudo,
         "materiais_gerados": []
     }
     
     # Gerar cada tipo de material solicitado
     erros = []
-    for tipo in request.tipos_material:
+    for tipo in request_body.tipos_material:
         if tipo not in TIPOS_MATERIAIS:
-            erros.append(f"Tipo '{tipo}' não encontrado")
+            erros.append(f"Tipo '{tipo}' nao encontrado")
             continue
         
         config = TIPOS_MATERIAIS[tipo]
         metodo_nome = config["metodo"]
         
         try:
-            print(f"🔄 Gerando {config['nome']}...")
+            print(f"[IA] Gerando {config['nome']}...")
             metodo = getattr(service, metodo_nome)
             
-            # Chamar método com ou sem diagnósticos
+            # Chamar metodo com ou sem diagnosticos
             if config.get("usa_diagnostico"):
-                resultado = metodo(request.disciplina, serie, request.conteudo, diagnosticos)
+                resultado = metodo(request_body.disciplina, serie, request_body.conteudo, diagnosticos)
             else:
-                resultado = metodo(request.disciplina, serie, request.conteudo)
+                resultado = metodo(request_body.disciplina, serie, request_body.conteudo)
             
             response[tipo] = resultado
             response["materiais_gerados"].append(tipo)
-            print(f"✅ {config['nome']} gerado!")
+            print(f"[OK] {config['nome']} gerado!")
             
         except Exception as e:
-            print(f"❌ Erro ao gerar {config['nome']}: {e}")
-            erros.append(f"{config['nome']}: {str(e)}")
+            print(f"[ERRO] Gerar {config['nome']}: {type(e).__name__}")
+            # SEGURANCA: nao vazar detalhes de erro interno ao cliente
+            erros.append(f"{config['nome']}: erro na geracao")
     
     if erros:
         response["erros"] = erros
@@ -174,11 +184,11 @@ async def gerar_materiais_adaptados(
     # Salvar no banco
     try:
         material_salvo = MaterialAdaptadoGerado(
-            student_id=request.student_id,
-            disciplina=request.disciplina,
+            student_id=request_body.student_id,
+            disciplina=request_body.disciplina,
             serie=serie,
-            conteudo=request.conteudo,
-            tipos_material=request.tipos_material,
+            conteudo=request_body.conteudo,
+            tipos_material=request_body.tipos_material,
             resultado_json=response,
             tempo_geracao=int(tempo_total),
             created_by=current_user.id
@@ -187,9 +197,9 @@ async def gerar_materiais_adaptados(
         db.commit()
         db.refresh(material_salvo)
         response["material_id"] = material_salvo.id
-        print(f"✅ Material salvo! ID: {material_salvo.id}")
+        print(f"[OK] Material salvo! ID: {material_salvo.id}")
     except Exception as e:
-        print(f"⚠️ Erro ao salvar: {e}")
+        print(f"[ERRO] Salvar material: {type(e).__name__}")
         db.rollback()
     
     return response
@@ -227,40 +237,49 @@ async def listar_tipos_materiais(
 @router.get("/historico/student/{student_id}")
 async def listar_historico_student(
     student_id: int,
+    pagination: PaginationParams = Depends(),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
-    limit: int = 50,
-    offset: int = 0
 ):
-    """📚 Lista histórico de materiais gerados para um aluno"""
+    """
+    Lista historico de materiais gerados para um aluno (paginado).
     
-    student = db.query(Student).filter(Student.id == student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Aluno não encontrado")
+    Query params:
+    - page: pagina (default 1)
+    - size: itens por pagina (default 20, max 100)
     
-    materiais = db.query(MaterialAdaptadoGerado)\
+    Resposta no formato {items, meta} + chaves legadas 'total'/'materiais'
+    para compatibilidade com frontend existente.
+    """
+    
+    # SEGURANCA: verificar acesso ao aluno (evita IDOR entre escolas)
+    student = verificar_acesso_aluno(db, student_id, current_user)
+    
+    query = db.query(MaterialAdaptadoGerado)\
         .filter(MaterialAdaptadoGerado.student_id == student_id)\
-        .order_by(MaterialAdaptadoGerado.created_at.desc())\
-        .limit(limit).offset(offset).all()
+        .order_by(MaterialAdaptadoGerado.created_at.desc())
     
-    total = db.query(MaterialAdaptadoGerado)\
-        .filter(MaterialAdaptadoGerado.student_id == student_id).count()
+    total = query.count()
+    materiais = query.offset(pagination.offset).limit(pagination.limit).all()
     
-    return {
-        "total": total,
-        "materiais": [
-            {
-                "id": m.id,
-                "disciplina": m.disciplina,
-                "serie": m.serie,
-                "conteudo": m.conteudo,
-                "tipos_material": m.tipos_material,
-                "tempo_geracao": m.tempo_geracao,
-                "created_at": m.created_at.isoformat() if m.created_at else None
-            }
-            for m in materiais
-        ]
-    }
+    items = [
+        {
+            "id": m.id,
+            "disciplina": m.disciplina,
+            "serie": m.serie,
+            "conteudo": m.conteudo,
+            "tipos_material": m.tipos_material,
+            "tempo_geracao": m.tempo_geracao,
+            "created_at": m.created_at.isoformat() if m.created_at else None
+        }
+        for m in materiais
+    ]
+    
+    page = build_page(items=items, total=total, pagination=pagination)
+    # Compat retroativa: manter 'total' e 'materiais' no nivel raiz
+    page["total"] = total
+    page["materiais"] = items
+    return page
 
 
 @router.get("/historico/{material_id}")
@@ -276,6 +295,9 @@ async def buscar_material_por_id(
     
     if not material:
         raise HTTPException(status_code=404, detail="Material não encontrado")
+    
+    # SEGURANCA: verificar acesso ao aluno dono do material (evita IDOR)
+    verificar_acesso_aluno(db, material.student_id, current_user)
     
     return {
         "id": material.id,
@@ -304,6 +326,9 @@ async def deletar_material(
     
     if not material:
         raise HTTPException(status_code=404, detail="Material não encontrado")
+    
+    # SEGURANCA: verificar acesso ao aluno dono do material (evita IDOR)
+    verificar_acesso_aluno(db, material.student_id, current_user)
     
     db.delete(material)
     db.commit()

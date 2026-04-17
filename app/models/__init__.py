@@ -101,6 +101,15 @@ from app.models.planejamento_job import (
     JobStatus
 )
 
+# Background Tasks (E2 - persistidos no DB)
+from app.models.background_task import (
+    BackgroundTask,
+    BackgroundTaskStatus
+)
+
+# Cache de respostas de IA (E3 - economia de creditos Anthropic)
+from app.models.ai_cache import AICache
+
 
 __all__ = [
     # Multi-tenant
@@ -194,4 +203,11 @@ __all__ = [
     "PlanejamentoJob",
     "PlanejamentoJobLog",
     "JobStatus",
+    
+    # Background Tasks
+    "BackgroundTask",
+    "BackgroundTaskStatus",
+    
+    # Cache de IA
+    "AICache",
 ]

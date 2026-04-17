@@ -1,22 +1,47 @@
 """
-Service para geração de materiais adaptados com IA
-VERSÃO MEGA COMPLETA: 25+ tipos de materiais
+Service para geracao de materiais adaptados com IA.
+VERSAO MEGA COMPLETA: 25+ tipos de materiais.
+
+Usa cliente Anthropic centralizado (core/anthropic_client.py).
+Usa cache de IA (services/ai_cache_service.py) para economizar creditos.
 """
 import json
+import hashlib
 from typing import Dict, Any, List
-from anthropic import Anthropic
-from app.core.config import settings
+from app.core.anthropic_client import get_anthropic_client, get_default_model
+from app.services.ai_cache_service import lookup_cache, save_cache
+from app.core.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 
 class MaterialAdaptadoService:
-    """Serviço para gerar materiais educacionais adaptados"""
+    """Servico para gerar materiais educacionais adaptados"""
     
     def __init__(self):
-        self.client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self.model = "claude-3-5-sonnet-20241022"
+        # Cliente e modelo vindos do modulo centralizado
+        self.client = get_anthropic_client()
+        self.model = get_default_model()
     
-    def _chamar_ia(self, prompt: str, max_tokens: int = 2048) -> Dict[str, Any]:
-        """Método auxiliar para chamar a IA e processar resposta JSON"""
+    def _chamar_ia(self, prompt: str, max_tokens: int = 2048, cache_type: str = "material") -> Dict[str, Any]:
+        """
+        Chama a IA e processa resposta JSON.
+        
+        Usa cache automatico baseado no hash do prompt + modelo + max_tokens.
+        Cache hit -> retorna resposta antiga sem chamar Claude (economiza credito).
+        Cache miss -> chama Claude e salva resposta.
+        """
+        # 1. Tentar cache primeiro
+        prompt_hash = hashlib.sha256(
+            f"{prompt}||max_tokens={max_tokens}".encode("utf-8")
+        ).hexdigest()
+        
+        cached = lookup_cache(prompt_hash, self.model, ttl_hours=168)  # 7 dias
+        if cached and isinstance(cached, dict) and "data" in cached:
+            logger.info("Cache hit em material", extra={"cache_type": cache_type})
+            return cached["data"]
+        
+        # 2. Cache miss - chamar Claude
         response = self.client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
@@ -24,7 +49,30 @@ class MaterialAdaptadoService:
         )
         result = response.content[0].text.strip()
         result = result.replace("```json", "").replace("```", "").strip()
-        return json.loads(result)
+        
+        try:
+            parsed = json.loads(result)
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "Resposta da IA nao e JSON valido - nao cacheando",
+                extra={"cache_type": cache_type, "erro": str(e)},
+            )
+            # Nao cacheia resposta invalida - relanca para o chamador tratar
+            raise
+        
+        # 3. Salvar no cache (best effort)
+        try:
+            save_cache(
+                prompt_hash=prompt_hash,
+                model=self.model,
+                response={"data": parsed},
+                cache_type=cache_type,
+            )
+        except Exception:
+            # Falha ao salvar no cache nao deve impedir retorno do material
+            pass
+        
+        return parsed
     
     # ==========================================
     # 📚 MATERIAIS DE LEITURA
@@ -40,7 +88,7 @@ AVANÇADO: Texto acadêmico completo.
 FORMATO JSON:
 {{"basico": "texto", "intermediario": "texto", "avancado": "texto", "vocabulario": {{"termo": "definição"}}}}
 Retorne APENAS o JSON."""
-        return self._chamar_ia(prompt, 4096)
+        return self._chamar_ia(prompt, 4096, cache_type="texto_3_niveis")
     
     def gerar_resumo_estruturado(self, disciplina: str, serie: str, conteudo: str) -> Dict[str, Any]:
         """Gera resumo com estrutura visual clara"""
@@ -95,7 +143,7 @@ Use símbolos, emojis, setas, boxes.
 FORMATO JSON:
 {{"titulo": "título", "conteudo_markdown": "infográfico em markdown", "elementos_visuais": ["sugestão1"]}}
 Retorne APENAS o JSON."""
-        return self._chamar_ia(prompt, 3072)
+        return self._chamar_ia(prompt, 3072, cache_type="infografico")
     
     def gerar_mapa_mental(self, disciplina: str, serie: str, conteudo: str) -> Dict[str, Any]:
         """Gera mapa mental"""
@@ -105,7 +153,7 @@ Conceito central + 4-6 ramos + sub-ramos.
 FORMATO JSON:
 {{"tema_central": "tema", "ramos": [{{"titulo": "Ramo", "cor": "azul", "subtopicos": ["sub1", "sub2"]}}]}}
 Retorne APENAS o JSON."""
-        return self._chamar_ia(prompt, 2048)
+        return self._chamar_ia(prompt, 2048, cache_type="mapa_mental")
     
     def gerar_linha_tempo(self, disciplina: str, serie: str, conteudo: str) -> Dict[str, Any]:
         """Gera Linha do Tempo - eventos em ordem cronológica"""
@@ -207,7 +255,7 @@ Retorne APENAS o JSON."""
 FORMATO JSON:
 {{"cards": [{{"pergunta": "Pergunta", "resposta": "Resposta", "dica": "Dica opcional"}}]}}
 Retorne APENAS o JSON."""
-        return self._chamar_ia(prompt, 3072)
+        return self._chamar_ia(prompt, 3072, cache_type="flashcards")
     
     def gerar_jogo_memoria(self, disciplina: str, serie: str, conteudo: str) -> Dict[str, Any]:
         """Gera Jogo da Memória - pares de cartas"""

@@ -1,15 +1,16 @@
 """
-🤖 Service - Análise Inteligente do Diário de Aprendizagem
-Usa Claude para extrair disciplinas, tópicos, conceitos e gerar insights
+🤖 Service - Analise Inteligente do Diario de Aprendizagem.
+Usa Claude para extrair disciplinas, topicos, conceitos e gerar insights.
+
+Usa cliente Anthropic centralizado (core/anthropic_client.py).
 """
 import json
 from typing import Dict, Any, List, Optional
 from datetime import date, datetime, timedelta, timezone
-from anthropic import Anthropic
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
-from app.core.config import settings
+from app.core.anthropic_client import get_anthropic_client, get_default_model
 from app.models.diario_aprendizagem import (
     DiarioAprendizagem, 
     ConteudoExtraido, 
@@ -22,18 +23,17 @@ from app.models.student import Student
 
 class DiarioAIService:
     """
-    🧠 Serviço de IA para análise do diário de aprendizagem
+    🧠 Servico de IA para analise do diario de aprendizagem
     """
     
     def __init__(self):
-        self._client = None
-        self.model = "claude-3-5-sonnet-20241022"
+        # Usa cliente centralizado (lazy) em vez de criar instancia propria
+        self.model = get_default_model()
     
     @property
     def client(self):
-        if self._client is None:
-            self._client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        return self._client
+        """Acesso ao cliente Anthropic centralizado (lazy)."""
+        return get_anthropic_client()
     
     async def analisar_registro(
         self,

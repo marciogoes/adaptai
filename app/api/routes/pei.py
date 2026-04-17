@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from sqlalchemy.orm import Session
 from typing import Optional, List
 import base64
@@ -7,35 +7,28 @@ from pathlib import Path
 
 from app.database import get_db
 from app.core.config import settings
+from app.core.anthropic_client import get_anthropic_client
+from app.core.rate_limit import check_rate_limit
+from app.core.logging_config import get_logger
 from app.api.dependencies import get_current_active_user
 from app.models.user import User
 from app.models.relatorio import Relatorio
 from app.models.student import Student
 
+logger = get_logger(__name__)
+
 router = APIRouter(prefix="/pei", tags=["PEI - Plano Educacional Individualizado"])
 
-# Diretório de relatórios
+# Diretorio de relatorios
 RELATORIOS_DIR = Path(__file__).parent.parent.parent.parent / "storage" / "relatorios"
 
-# Cliente Anthropic (inicialização lazy)
-_client = None
-
-# Modelo que suporta PDFs e imagens
+# Modelo que suporta PDFs e imagens (controlado via settings.CLAUDE_MODEL)
 MODELO_VISAO = "claude-3-5-sonnet-20241022"
-
-def get_anthropic_client():
-    global _client
-    if _client is None:
-        try:
-            from anthropic import Anthropic
-            _client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        except Exception as e:
-            print(f"[AVISO] Erro ao inicializar Anthropic: {e}")
-    return _client
 
 
 @router.post("/analisar-laudo")
 async def analisar_laudo(
+    request: Request,
     arquivo: UploadFile = File(...),
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
@@ -45,13 +38,15 @@ async def analisar_laudo(
     Aceita relatórios de: psicopedagogos, terapeutas ocupacionais, fonoaudiólogos, psicólogos,
     neurologistas, psiquiatras e outros profissionais de saúde.
     Aceita PDF ou imagens (JPG, PNG).
+    
+    SEGURANCA: rate limited (10/hora) - cada analise custa tokens de visao (caro).
     """
+    check_rate_limit(
+        request, key="analisar_laudo", max_requests=10, window_seconds=3600,
+        error_message="Limite de analises de laudo atingido. Aguarde 1 hora."
+    )
+    
     client = get_anthropic_client()
-    if not client:
-        raise HTTPException(
-            status_code=500,
-            detail="Serviço de IA não disponível"
-        )
     
     # Verificar tipo de arquivo
     content_type = arquivo.content_type
@@ -234,29 +229,32 @@ Analise o documento com atenção e extraia todas as informações relevantes pa
             "arquivo_base64": f"data:{content_type};base64,{file_base64}"
         }
         
-    except Exception as e:
-        print(f"[ERRO] Falha ao analisar relatório: {str(e)}")
+    except Exception:
+        logger.exception("Falha ao analisar laudo com IA", extra={"arquivo": arquivo.filename})
         raise HTTPException(
             status_code=500,
-            detail=f"Erro ao analisar relatório com IA: {str(e)}"
+            detail="Erro ao analisar o relatório. Tente novamente mais tarde."
         )
 
 
 @router.post("/gerar-pei-completo")
 async def gerar_pei_completo(
     dados_laudos: dict,
+    request: Request,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """
     Gera um PEI completo baseado nos dados extraídos dos relatórios de terapias e acompanhamento usando IA.
+    
+    SEGURANCA: rate limited (20/hora).
     """
+    check_rate_limit(
+        request, key="gerar_pei_completo", max_requests=20, window_seconds=3600,
+        error_message="Limite de geracoes de PEI atingido. Aguarde 1 hora."
+    )
+    
     client = get_anthropic_client()
-    if not client:
-        raise HTTPException(
-            status_code=500,
-            detail="Serviço de IA não disponível"
-        )
     
     prompt = f"""Com base nos dados dos relatórios de terapias e acompanhamento abaixo, gere um Plano Educacional Individualizado (PEI) completo.
 
@@ -324,9 +322,9 @@ Retorne APENAS o JSON, sem explicações adicionais."""
             "pei": pei_gerado
         }
         
-    except Exception as e:
-        print(f"[ERRO] Falha ao gerar PEI: {str(e)}")
+    except Exception:
+        logger.exception("Falha ao gerar PEI com IA")
         raise HTTPException(
             status_code=500,
-            detail=f"Erro ao gerar PEI com IA: {str(e)}"
+            detail="Erro ao gerar PEI. Tente novamente mais tarde."
         )

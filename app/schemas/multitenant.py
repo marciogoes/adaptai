@@ -1,10 +1,11 @@
 # ============================================
 # SCHEMAS MULTI-TENANT (Escolas, Planos, Assinaturas)
 # ============================================
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
+from app.schemas.user import validar_senha_forte
 
 
 # ==========================================
@@ -310,13 +311,19 @@ class CheckoutRequest(BaseModel):
     # Dados do administrador
     admin_nome: str = Field(..., min_length=3, max_length=255)
     admin_email: EmailStr
-    admin_senha: str = Field(..., min_length=6)
+    # SEGURANCA A13: admin_senha segue politica forte (min 10 chars + maiuscula + minuscula + numero)
+    admin_senha: str = Field(..., min_length=10, max_length=128)
     admin_telefone: Optional[str] = None
     
-    # Endereço (opcional para trial)
+    # Endereco (opcional para trial)
     cep: Optional[str] = None
     cidade: Optional[str] = None
     estado: Optional[str] = None
+    
+    @field_validator("admin_senha")
+    @classmethod
+    def _validar_senha(cls, v: str) -> str:
+        return validar_senha_forte(v)
 
 
 class CheckoutResponse(BaseModel):

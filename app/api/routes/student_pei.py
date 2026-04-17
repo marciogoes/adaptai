@@ -11,7 +11,7 @@ from datetime import date
 from app.database import get_db
 from app.models.student import Student
 from app.models.pei import PEI, PEIObjetivo
-from app.api.routes.student_provas import get_current_student
+from app.api.dependencies import get_current_student
 
 router = APIRouter()
 

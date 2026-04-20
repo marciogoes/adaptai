@@ -35,15 +35,10 @@ def validar_senha_forte(senha: str) -> str:
     if len(senha) > 128:
         raise ValueError("Senha muito longa (max 128 caracteres)")
     
-    if not re.search(r"[A-Z]", senha):
-        raise ValueError("Senha deve conter pelo menos uma letra maiuscula")
-    
-    if not re.search(r"[a-z]", senha):
-        raise ValueError("Senha deve conter pelo menos uma letra minuscula")
-    
-    if not re.search(r"\d", senha):
-        raise ValueError("Senha deve conter pelo menos um numero")
-    
+    # FIX: lista de senhas obvias checada ANTES das validacoes de caracteres.
+    # Caso contrario, 'PASSWORD123' era rejeitado por "falta minuscula" em vez
+    # de por "muito comum" - mensagem pior pro usuario, e o teste
+    # test_senha_obvia_bloqueada esperava a mensagem especifica case-insensitive.
     # Lista curta de senhas obvias para bloquear
     senhas_proibidas = {
         "12345678901", "1234567890", "abcd1234ab", "senha12345",
@@ -52,6 +47,15 @@ def validar_senha_forte(senha: str) -> str:
     }
     if senha.lower() in senhas_proibidas:
         raise ValueError("Esta senha e muito comum. Escolha uma mais segura.")
+    
+    if not re.search(r"[A-Z]", senha):
+        raise ValueError("Senha deve conter pelo menos uma letra maiuscula")
+    
+    if not re.search(r"[a-z]", senha):
+        raise ValueError("Senha deve conter pelo menos uma letra minuscula")
+    
+    if not re.search(r"\d", senha):
+        raise ValueError("Senha deve conter pelo menos um numero")
     
     return senha
 

@@ -241,13 +241,20 @@ def _init_backends():
 
 
 def _redacted_url(url: str) -> str:
-    """Ofusca credenciais de uma URL tipo redis://user:pass@host:port/0 para log."""
+    """Ofusca credenciais de uma URL tipo redis://user:pass@host:port/0 para log.
+
+    FIX: urlparse nao lanca exception em strings lixo tipo 'nao-e-url',
+    apenas retorna um ParseResult com scheme/hostname vazios. Antes, isso
+    resultava em '://***@?:' (bagunca visivel no log). Agora detectamos
+    URL malformada (scheme ou hostname ausentes) e caimos no fallback.
+    """
     try:
         from urllib.parse import urlparse
         p = urlparse(url)
-        host = p.hostname or "?"
+        if not p.scheme or not p.hostname:
+            return "redis://***"
         port = p.port or ""
-        return f"{p.scheme}://***@{host}:{port}"
+        return f"{p.scheme}://***@{p.hostname}:{port}"
     except Exception:
         return "redis://***"
 

@@ -21,7 +21,7 @@ Ou manual para queries mais customizadas:
     items = query.offset(pagination.offset).limit(pagination.limit).all()
     return build_page(items=items, total=total, pagination=pagination)
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Annotated
 from fastapi import Query
 
 
@@ -32,12 +32,20 @@ class PaginationParams:
     Defaults seguros:
     - page 1 (comeca em 1, nao 0 - mais natural para clientes)
     - size 20 (ok para dashboards; max 100 para evitar dump massivo)
+    
+    FIX: antes, `__init__` recebia `page: int = Query(1, ge=1)` direto.
+    Isso funcionava quando o FastAPI resolvia via Depends(PaginationParams),
+    mas quebrava na instanciacao direta (PaginationParams() -> self.page
+    recebia o objeto Query, nao o int 1). Agora usa Annotated[int, Query(...)]:
+    o FastAPI le a metadata via Annotated mas o default real e um int, entao
+    PaginationParams() -> self.page == 1 funciona tambem em testes e codigo
+    que nao e endpoint.
     """
     
     def __init__(
         self,
-        page: int = Query(1, ge=1, description="Pagina (comecando em 1)"),
-        size: int = Query(20, ge=1, le=100, description="Itens por pagina (max 100)"),
+        page: Annotated[int, Query(ge=1, description="Pagina (comecando em 1)")] = 1,
+        size: Annotated[int, Query(ge=1, le=100, description="Itens por pagina (max 100)")] = 20,
     ):
         self.page = page
         self.size = size

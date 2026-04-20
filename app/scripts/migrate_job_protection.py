@@ -70,28 +70,37 @@ def run_migration():
                 except Exception as e:
                     print(f"   ❌ Erro ao adicionar '{coluna}': {e}")
         
-        # Criar índice para busca de jobs travados
+        # Criar índices para busca de jobs travados e lookup por aluno.
+        # FIX: MySQL nao suporta CREATE INDEX IF NOT EXISTS (so MariaDB/Postgres).
+        # A versao anterior mascarava o erro de sintaxe como "indice pode ja existir",
+        # entao os indices nunca eram criados de fato. Agora checamos antes via
+        # information_schema, mesmo padrao usado para colunas acima.
         print("\n📊 Verificando índices...")
-        try:
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_jobs_heartbeat 
-                ON planejamento_jobs (status, last_heartbeat)
-            """))
-            conn.commit()
-            print("   ✅ Índice idx_jobs_heartbeat criado/verificado")
-        except Exception as e:
-            # MySQL não suporta IF NOT EXISTS em índices
-            print(f"   ⚠️ Índice pode já existir: {e}")
         
-        try:
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_jobs_student_status 
-                ON planejamento_jobs (student_id, ano_letivo, status)
-            """))
-            conn.commit()
-            print("   ✅ Índice idx_jobs_student_status criado/verificado")
-        except Exception as e:
-            print(f"   ⚠️ Índice pode já existir: {e}")
+        result = conn.execute(text("""
+            SELECT INDEX_NAME 
+            FROM information_schema.statistics 
+            WHERE table_schema = DATABASE()
+            AND table_name = 'planejamento_jobs'
+        """))
+        indices_existentes = {row[0] for row in result.fetchall()}
+        
+        indices_novos = {
+            "idx_jobs_heartbeat": "planejamento_jobs (status, last_heartbeat)",
+            "idx_jobs_student_status": "planejamento_jobs (student_id, ano_letivo, status)",
+        }
+        
+        for nome, definicao in indices_novos.items():
+            if nome in indices_existentes:
+                print(f"   ✓ Índice '{nome}' já existe")
+                continue
+            print(f"   ➕ Criando índice '{nome}'...")
+            try:
+                conn.execute(text(f"CREATE INDEX {nome} ON {definicao}"))
+                conn.commit()
+                print(f"      ✅ Índice '{nome}' criado com sucesso!")
+            except Exception as e:
+                print(f"      ❌ Erro ao criar índice '{nome}': {e}")
         
         print("\n" + "=" * 60)
         print("✅ MIGRATION CONCLUÍDA!")

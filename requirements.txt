@@ -22,7 +22,14 @@ python-multipart==0.0.6
 
 # IA - Anthropic Claude (versao compativel)
 anthropic>=0.39.0
-httpx>=0.27.0
+# FIX: httpx >= 0.28 removeu o kwarg 'app' do Client.__init__, quebrando
+# o TestClient do starlette 0.27.x (usado pelo fastapi 0.104). Fixar limite
+# superior ate fastapi/starlette serem atualizados.
+httpx>=0.27.0,<0.28
+# FIX: httpx 0.27.x nao pina upper bound de anyio, e o pip puxa anyio 4.x
+# como transitiva - mas fastapi 0.104.1 exige anyio<4.0.0. Pinar explicito
+# aqui para o resolver nao escolher errado.
+anyio>=3.7.1,<4.0.0
 
 # PDF - Extração de texto
 PyMuPDF==1.24.0

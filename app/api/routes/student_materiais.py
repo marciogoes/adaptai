@@ -69,7 +69,33 @@ async def visualizar_material(
             detail=f"Material não está disponível. Status: {material_aluno.material.status}"
         )
     
-    # Registrar visualização
+    # FIX: primeiro carregar o conteudo e so entao registrar visualizacao.
+    # Antes, o codigo commitava a visualizacao ANTES de verificar se o tipo
+    # era suportado, e tipos nao-VISUAL/MAPA_MENTAL caiam num return implicito
+    # None (commitando inflacao do contador + resposta vazia pro aluno).
+    material = material_aluno.material
+    
+    if material.tipo == TipoMaterial.VISUAL:
+        conteudo = storage_service.ler_html(material.id)
+        conteudo_tipo = "html"
+    elif material.tipo == TipoMaterial.MAPA_MENTAL:
+        conteudo = storage_service.ler_json(material.id)
+        conteudo_tipo = "json"
+    else:
+        # Tipo nao suportado no portal do aluno ainda (ex: flashcards,
+        # infografico - esses vivem em MaterialAdaptadoGerado, nao aqui).
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail=f"Tipo de material '{material.tipo}' nao suportado nesta rota."
+        )
+    
+    if not conteudo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conteúdo do material não encontrado"
+        )
+    
+    # Registrar visualização agora que sabemos que vamos entregar o conteudo
     if material_aluno.data_primeira_visualizacao is None:
         material_aluno.data_primeira_visualizacao = func.now()
     
@@ -79,52 +105,19 @@ async def visualizar_material(
     db.commit()
     db.refresh(material_aluno)
     
-    # Buscar conteúdo do storage
-    material = material_aluno.material
-    
-    if material.tipo == TipoMaterial.VISUAL:
-        conteudo = storage_service.ler_html(material.id)
-        if not conteudo:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Conteúdo do material não encontrado"
-            )
-        
-        return {
-            "material_aluno": material_aluno,
-            "material": {
-                "id": material.id,
-                "titulo": material.titulo,
-                "descricao": material.descricao,
-                "tipo": material.tipo,
-                "materia": material.materia,
-                "serie_nivel": material.serie_nivel
-            },
-            "conteudo_tipo": "html",
-            "conteudo": conteudo
-        }
-    
-    elif material.tipo == TipoMaterial.MAPA_MENTAL:
-        conteudo = storage_service.ler_json(material.id)
-        if not conteudo:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Conteúdo do material não encontrado"
-            )
-        
-        return {
-            "material_aluno": material_aluno,
-            "material": {
-                "id": material.id,
-                "titulo": material.titulo,
-                "descricao": material.descricao,
-                "tipo": material.tipo,
-                "materia": material.materia,
-                "serie_nivel": material.serie_nivel
-            },
-            "conteudo_tipo": "json",
-            "conteudo": conteudo
-        }
+    return {
+        "material_aluno": material_aluno,
+        "material": {
+            "id": material.id,
+            "titulo": material.titulo,
+            "descricao": material.descricao,
+            "tipo": material.tipo,
+            "materia": material.materia,
+            "serie_nivel": material.serie_nivel
+        },
+        "conteudo_tipo": conteudo_tipo,
+        "conteudo": conteudo
+    }
 
 
 @router.post("/{material_aluno_id}/favorito")

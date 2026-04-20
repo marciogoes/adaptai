@@ -13,7 +13,7 @@ import gzip
 import hashlib
 import re
 from typing import Optional, List, Dict, Any
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 
@@ -28,6 +28,10 @@ from app.models.pei import PEI, PEIObjetivo
 from app.models.relatorio import Relatorio
 from app.models.planejamento_job import PlanejamentoJob, PlanejamentoJobLog, JobStatus
 
+from app.core.logging_config import get_logger
+
+logger = get_logger(__name__)
+
 
 # Cliente Anthropic: centralizado em app.core.anthropic_client (singleton lazy).
 # Antes este arquivo mantinha _client/MODELO_IA proprios, duplicando instancia
@@ -39,6 +43,18 @@ RETRY_DELAY = 2  # Segundos entre tentativas
 LOTE_SIZE = 12   # Habilidades por lote (reduzido para maior segurança)
 KEEPALIVE_INTERVAL = 30  # Segundos entre pings no MySQL
 MAX_JSON_SIZE_BYTES = 500_000  # 500KB - acima disso comprime
+
+
+def _utcnow() -> datetime:
+    """
+    Retorna datetime timezone-aware (UTC).
+
+    FIX: substitui datetime.utcnow() (deprecated no Python 3.12+, produz
+    naive datetime e causa TypeError ao comparar/subtrair de datetimes
+    aware como os setados em main.py::lifespan e em planejamento_job
+    model defaults).
+    """
+    return datetime.now(timezone.utc)
 
 
 class PlanejamentoBNNCCompletoService:
@@ -55,7 +71,7 @@ class PlanejamentoBNNCCompletoService:
         try:
             self.client = _get_core_anthropic_client()
         except Exception as e:
-            print(f"[AVISO] Cliente Anthropic indisponivel: {e}")
+            logger.exception(f"[AVISO] Cliente Anthropic indisponivel: {e}")
             self.client = None
     
     # ============================================
@@ -68,7 +84,7 @@ class PlanejamentoBNNCCompletoService:
             self.db.execute(text("SELECT 1"))
             self.db.commit()
         except Exception as e:
-            print(f"[KEEPALIVE] Erro no ping: {e}")
+            logger.exception(f"[KEEPALIVE] Erro no ping: {e}")
     
     def _comprimir_se_necessario(self, dados: Dict) -> Dict:
         """
@@ -89,7 +105,7 @@ class PlanejamentoBNNCCompletoService:
                 "__checksum__": hashlib.md5(json_str.encode()).hexdigest()
             }
             reducao = 100 - (len(comprimido)/tamanho*100)
-            print(f"[📦 COMPRESS] {tamanho:,} bytes → {len(comprimido):,} bytes ({reducao:.1f}% redução)")
+            logger.info(f"[📦 COMPRESS] {tamanho:,} bytes → {len(comprimido):,} bytes ({reducao:.1f}% redução)")
             return resultado
         
         return dados
@@ -111,7 +127,7 @@ class PlanejamentoBNNCCompletoService:
                 
                 return json.loads(json_str)
             except Exception as e:
-                print(f"[❌ DECOMPRESS] Erro: {e}")
+                logger.exception(f"[❌ DECOMPRESS] Erro: {e}")
                 raise
         
         return dados
@@ -166,7 +182,7 @@ class PlanejamentoBNNCCompletoService:
         if ultimo_erro:
             job.ultimo_erro = ultimo_erro
         
-        job.updated_at = datetime.utcnow()
+        job.updated_at = _utcnow()
         self.db.commit()
         self._keep_alive()  # Mantém conexão ativa
     
@@ -187,12 +203,13 @@ class PlanejamentoBNNCCompletoService:
         resultados[componente] = {
             "total_habilidades": len(objetivos),
             "objetivos": objetivos,
-            "processado_em": datetime.utcnow().isoformat()
+            "processado_em": _utcnow().isoformat()
         }
         
         # Comprimir se muito grande
         resultados_para_salvar = self._comprimir_se_necessario(resultados)
-        job.resultados_parciais = json.dumps(resultados_para_salvar, ensure_ascii=False)
+        # FIX: dict direto, nao json.dumps (ver comentario em _salvar_checkpoint_lote).
+        job.resultados_parciais = resultados_para_salvar
         
         # Atualizar lista de componentes processados
         processados = job.componentes_processados or []
@@ -244,20 +261,24 @@ class PlanejamentoBNNCCompletoService:
             
             # Comprimir se muito grande
             resultados_para_salvar = self._comprimir_se_necessario(resultados)
-            job.resultados_parciais = json.dumps(resultados_para_salvar, ensure_ascii=False)
+            # FIX: passar dict direto. Antes fazia json.dumps() armazenando
+            # uma string em uma coluna JSON (dupla serializacao - o MySQL
+            # guardava uma string JSON dentro de um campo JSON). A leitura
+            # ja trata ambos os formatos defensivamente.
+            job.resultados_parciais = resultados_para_salvar
             
             # Atualizar heartbeat e lote atual
             job.lote_atual = lote_numero
             if hasattr(job, 'last_heartbeat'):
-                job.last_heartbeat = datetime.utcnow()
+                job.last_heartbeat = _utcnow()
             
             self.db.commit()
             self._keep_alive()
             
-            print(f"[💾 CHECKPOINT] {componente} lote {lote_numero}: {len(objetivos_acumulados)} objetivos salvos")
+            logger.info(f"[💾 CHECKPOINT] {componente} lote {lote_numero}: {len(objetivos_acumulados)} objetivos salvos")
             
         except Exception as e:
-            print(f"[⚠️ CHECKPOINT] Erro ao salvar lote {lote_numero}: {e}")
+            logger.exception(f"[⚠️ CHECKPOINT] Erro ao salvar lote {lote_numero}: {e}")
             # Não propagar erro - o lote foi processado, só o checkpoint falhou
     
     def _obter_lotes_ja_processados(self, job: PlanejamentoJob, componente: str) -> tuple[List[int], List[Dict]]:
@@ -279,13 +300,13 @@ class PlanejamentoBNNCCompletoService:
                 objetivos = dados_componente.get("objetivos", [])
                 
                 if lotes:
-                    print(f"[🔄 RECOVERY] {componente}: recuperados lotes {lotes} com {len(objetivos)} objetivos")
+                    logger.info(f"[🔄 RECOVERY] {componente}: recuperados lotes {lotes} com {len(objetivos)} objetivos")
                     return lotes, objetivos
             
             return [], []
             
         except Exception as e:
-            print(f"[⚠️ RECOVERY] Erro ao recuperar lotes de {componente}: {e}")
+            logger.exception(f"[⚠️ RECOVERY] Erro ao recuperar lotes de {componente}: {e}")
             return [], []
     
     def _registrar_log(
@@ -333,7 +354,7 @@ class PlanejamentoBNNCCompletoService:
         Usa SELECT FOR UPDATE para evitar race condition.
         """
         from datetime import timedelta
-        limite_travado = datetime.utcnow() - timedelta(minutes=10)
+        limite_travado = _utcnow() - timedelta(minutes=10)
         
         try:
             # LOCK ATÔMICO: SELECT FOR UPDATE impede que outra transação
@@ -364,7 +385,7 @@ class PlanejamentoBNNCCompletoService:
                         WHERE id = :job_id
                     """), {"job_id": job_id})
                     self.db.commit()
-                    print(f"[🔓 LOCK] Job {job_id} travado, liberado para nova execução")
+                    logger.info(f"[🔓 LOCK] Job {job_id} travado, liberado para nova execução")
                     return None  # Permite criar novo
                 
                 # Job ativo encontrado
@@ -380,7 +401,7 @@ class PlanejamentoBNNCCompletoService:
             erro_str = str(e).lower()
             # Se outro processo já tem o lock (NOWAIT retorna erro)
             if "lock" in erro_str or "timeout" in erro_str or "nowait" in erro_str:
-                print(f"[🔒 LOCK] Outro processo já está verificando este aluno")
+                logger.info(f"[🔒 LOCK] Outro processo já está verificando este aluno")
                 # Retornar um job "fake" para bloquear criação
                 fake_job = PlanejamentoJob()
                 fake_job.id = -1
@@ -389,7 +410,7 @@ class PlanejamentoBNNCCompletoService:
                 return fake_job
             
             # Outro erro - logar e permitir continuar
-            print(f"[⚠️ LOCK] Erro na verificação: {e}")
+            logger.exception(f"[⚠️ LOCK] Erro na verificação: {e}")
             self.db.rollback()
             return None
     
@@ -415,17 +436,17 @@ class PlanejamentoBNNCCompletoService:
             
             if count > 0:
                 self.db.rollback()
-                print(f"[🔒 LOCK] Job já existe após double-check")
+                logger.info(f"[🔒 LOCK] Job já existe após double-check")
                 return False
             
             # Lock adquirido com sucesso
             self.db.commit()
-            print(f"[🔓 LOCK] Lock adquirido para student_id={student_id}")
+            logger.info(f"[🔓 LOCK] Lock adquirido para student_id={student_id}")
             return True
             
         except Exception as e:
             self.db.rollback()
-            print(f"[⚠️ LOCK] Erro ao adquirir lock: {e}")
+            logger.exception(f"[⚠️ LOCK] Erro ao adquirir lock: {e}")
             return False
     
     def limpar_jobs_antigos(self, student_id: int, manter_ultimos: int = 5):
@@ -586,7 +607,7 @@ DIFICULDADES:
                 
                 # Atualizar heartbeat do job
                 if hasattr(job, 'last_heartbeat'):
-                    job.last_heartbeat = datetime.utcnow()
+                    job.last_heartbeat = _utcnow()
                     job.heartbeat_count = (job.heartbeat_count or 0) + 1
                     self.db.commit()
                 
@@ -619,8 +640,10 @@ DIFICULDADES:
                 
                 if is_rate_limit:
                     wait_time = RATE_LIMIT_BASE_WAIT ** tentativa  # 4s, 16s, 64s
-                    print(f"[⏳ RATE LIMIT] Lote {lote_numero} de {componente} - "
-                          f"Tentativa {tentativa}/{MAX_RETRIES}. Aguardando {wait_time}s...")
+                    logger.warning(
+                        "rate limit: lote %s de %s - tentativa %s/%s aguardando %ss",
+                        lote_numero, componente, tentativa, MAX_RETRIES, wait_time,
+                    )
                     
                     self._registrar_log(
                         job, "rate_limit", componente, lote_numero,
@@ -632,7 +655,7 @@ DIFICULDADES:
                     self._keep_alive()
                     continue
                 
-                print(f"[RETRY] Lote {lote_numero} de {componente} - Tentativa {tentativa} falhou: {e}")
+                logger.warning(f"[RETRY] Lote {lote_numero} de {componente} - Tentativa {tentativa} falhou: {e}")
                 
                 self._registrar_log(
                     job, "lote_erro", componente, lote_numero,
@@ -645,7 +668,7 @@ DIFICULDADES:
                     self._keep_alive()
         
         # Todas as tentativas falharam
-        print(f"[ERRO] Lote {lote_numero} de {componente} falhou após {MAX_RETRIES} tentativas")
+        logger.error(f"[ERRO] Lote {lote_numero} de {componente} falhou após {MAX_RETRIES} tentativas")
         job.tentativas += 1
         self._atualizar_job(job, ultimo_erro=ultimo_erro)
         
@@ -750,7 +773,7 @@ IMPORTANTE:
         def update_progress(progress: int, message: str):
             if task_manager and task_id:
                 task_manager.update_task(task_id, progress=progress, message=message)
-            print(f"[{progress}%] {message}")
+            logger.info(f"[{progress}%] {message}")
         
         if not self.client:
             raise Exception("Serviço de IA não disponível")
@@ -772,7 +795,7 @@ IMPORTANTE:
         if retomar_job:
             job = self.obter_job_para_retomar(student_id, ano_letivo)
             if job:
-                print(f"[INFO] Retomando job existente: {job.task_id}")
+                logger.info(f"[INFO] Retomando job existente: {job.task_id}")
                 self._registrar_log(job, "job_retomado", mensagem="Job retomado")
         
         update_progress(5, "Carregando perfil do aluno...")
@@ -801,7 +824,7 @@ IMPORTANTE:
             self._registrar_log(job, "job_criado", mensagem=f"Componentes: {', '.join(componentes)}")
         
         # Atualizar status
-        job.started_at = datetime.utcnow()
+        job.started_at = _utcnow()
         self._atualizar_job(job, status=JobStatus.PROCESSING.value, message="Processando...")
         
         update_progress(10, f"Processando {len(componentes)} componentes...")
@@ -811,8 +834,8 @@ IMPORTANTE:
         componentes_pendentes = [c for c in componentes if c not in componentes_processados]
         
         if componentes_processados:
-            print(f"[INFO] Componentes já processados: {componentes_processados}")
-            print(f"[INFO] Componentes pendentes: {componentes_pendentes}")
+            logger.info(f"[INFO] Componentes já processados: {componentes_processados}")
+            logger.info(f"[INFO] Componentes pendentes: {componentes_pendentes}")
         
         # Carregar resultados parciais existentes (com descompressão se necessário)
         resultados_parciais = job.resultados_parciais or {}
@@ -850,7 +873,7 @@ IMPORTANTE:
             habilidades_db = self.buscar_todas_habilidades(ano_escolar, componente)
             
             if not habilidades_db:
-                print(f"[AVISO] Nenhuma habilidade para {componente} no {ano_escolar}")
+                logger.warning(f"[AVISO] Nenhuma habilidade para {componente} no {ano_escolar}")
                 continue
             
             habilidades = [
@@ -882,7 +905,7 @@ IMPORTANTE:
                 
                 # PULAR lotes já processados (recuperação granular)
                 if lote_numero in lotes_ja_processados:
-                    print(f"[⏭️ SKIP] {componente} lote {lote_numero}/{total_lotes} já processado")
+                    logger.info(f"[⏭️ SKIP] {componente} lote {lote_numero}/{total_lotes} já processado")
                     continue
                 
                 lote = habilidades[lote_idx:lote_idx + LOTE_SIZE]
@@ -955,8 +978,9 @@ IMPORTANTE:
         
         # Atualizar job como concluído (com compressão se necessário)
         resultado_para_salvar = self._comprimir_se_necessario(planejamento_completo)
-        job.resultado_final = json.dumps(resultado_para_salvar, ensure_ascii=False)
-        job.completed_at = datetime.utcnow()
+        # FIX: dict direto, nao json.dumps (ver comentario em _salvar_checkpoint_lote).
+        job.resultado_final = resultado_para_salvar
+        job.completed_at = _utcnow()
         self._atualizar_job(job, 
                           status=JobStatus.COMPLETED.value,
                           progress=100,
@@ -1146,9 +1170,9 @@ IMPORTANTE:
             if self._validar_estrutura_objetivos(resultado, habilidades):
                 return resultado
             
-            print(f"[⚠️ JSON] Estrutura inválida, tentando recuperação...")
+            logger.warning(f"[⚠️ JSON] Estrutura inválida, tentando recuperação...")
         except json.JSONDecodeError as e:
-            print(f"[⚠️ JSON] Parse falhou: {e}. Tentando recuperação...")
+            logger.exception(f"[⚠️ JSON] Parse falhou: {e}. Tentando recuperação...")
         
         # Estratégia 2: Encontrar JSON dentro do texto com regex
         try:
@@ -1157,10 +1181,10 @@ IMPORTANTE:
             if json_match:
                 resultado = json.loads(json_match.group())
                 if self._validar_estrutura_objetivos(resultado, habilidades):
-                    print(f"[✅ JSON] Recuperado via regex (padrão 1)")
+                    logger.info(f"[✅ JSON] Recuperado via regex (padrão 1)")
                     return resultado
         except Exception as e:
-            print(f"[⚠️ JSON] Regex padrão 1 falhou: {e}")
+            logger.exception(f"[⚠️ JSON] Regex padrão 1 falhou: {e}")
         
         # Estratégia 3: Extrair array de objetivos diretamente
         try:
@@ -1170,23 +1194,23 @@ IMPORTANTE:
                 objetivos = json.loads(array_match.group())
                 resultado = {"objetivos": objetivos}
                 if self._validar_estrutura_objetivos(resultado, habilidades):
-                    print(f"[✅ JSON] Recuperado via regex (array direto)")
+                    logger.info(f"[✅ JSON] Recuperado via regex (array direto)")
                     return resultado
         except Exception as e:
-            print(f"[⚠️ JSON] Regex array falhou: {e}")
+            logger.exception(f"[⚠️ JSON] Regex array falhou: {e}")
         
         # Estratégia 4: Consertar JSON com problemas comuns
         try:
             texto_consertado = self._consertar_json(response_text)
             resultado = json.loads(texto_consertado)
             if self._validar_estrutura_objetivos(resultado, habilidades):
-                print(f"[✅ JSON] Recuperado após conserto")
+                logger.info(f"[✅ JSON] Recuperado após conserto")
                 return resultado
         except Exception as e:
-            print(f"[⚠️ JSON] Conserto falhou: {e}")
+            logger.exception(f"[⚠️ JSON] Conserto falhou: {e}")
         
         # Estratégia 5: Gerar objetivos mínimos de fallback
-        print(f"[🔄 FALLBACK] Gerando objetivos mínimos para {len(habilidades)} habilidades")
+        logger.info(f"[🔄 FALLBACK] Gerando objetivos mínimos para {len(habilidades)} habilidades")
         return self._gerar_objetivos_fallback(habilidades)
     
     def _validar_estrutura_objetivos(self, resultado: Dict, habilidades: List[Dict]) -> bool:
@@ -1203,7 +1227,7 @@ IMPORTANTE:
         # Deve ter pelo menos 50% dos objetivos esperados
         minimo_esperado = max(1, len(habilidades) // 2)
         if len(objetivos) < minimo_esperado:
-            print(f"[⚠️ VALID] Poucos objetivos: {len(objetivos)}/{len(habilidades)} (mínimo: {minimo_esperado})")
+            logger.warning(f"[⚠️ VALID] Poucos objetivos: {len(objetivos)}/{len(habilidades)} (mínimo: {minimo_esperado})")
             return False
         
         # Validar estrutura de cada objetivo
@@ -1213,7 +1237,7 @@ IMPORTANTE:
                 return False
             for campo in campos_obrigatorios:
                 if campo not in obj:
-                    print(f"[⚠️ VALID] Campo '{campo}' ausente em objetivo")
+                    logger.warning(f"[⚠️ VALID] Campo '{campo}' ausente em objetivo")
                     return False
         
         return True

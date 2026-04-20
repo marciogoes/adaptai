@@ -9,10 +9,14 @@ from datetime import datetime, date, timedelta
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.logging_config import get_logger
 from app.models.student import Student
 from app.models.curriculo import CurriculoNacional, MapeamentoPrerequisitos
 from app.models.pei import PEI, PEIObjetivo
 from app.models.relatorio import Relatorio
+
+
+logger = get_logger(__name__)
 
 
 # Cliente Anthropic (inicialização lazy)
@@ -27,7 +31,7 @@ def get_anthropic_client():
             from anthropic import Anthropic
             _client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
         except Exception as e:
-            print(f"[AVISO] Erro ao inicializar Anthropic: {e}")
+            logger.exception(f"[AVISO] Erro ao inicializar Anthropic: {e}")
     return _client
 
 

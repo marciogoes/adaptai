@@ -97,8 +97,16 @@ def get_meu_pei(
         objetivos_por_status[status] += 1
         
         # Progresso
-        if obj.valor_atual and obj.valor_alvo and obj.valor_alvo > 0:
-            total_progresso += (float(obj.valor_atual) / float(obj.valor_alvo)) * 100
+        # FIX: consistencia com a resposta, que usa 100 como default para
+        # valor_alvo e 0 para valor_atual. Antes, objetivos com valor_alvo
+        # nulo eram ignorados no calculo mas apareciam na resposta com
+        # alvo=100, criando divergencia entre os numeros que o aluno via.
+        # Tambem trava em 100% por objetivo (evita overshoot se valor_atual
+        # registrado for maior que alvo).
+        atual = float(obj.valor_atual) if obj.valor_atual else 0.0
+        alvo = float(obj.valor_alvo) if obj.valor_alvo else 100.0
+        if alvo > 0:
+            total_progresso += min(atual / alvo, 1.0) * 100
     
     progresso_geral = total_progresso / len(objetivos) if objetivos else 0
     

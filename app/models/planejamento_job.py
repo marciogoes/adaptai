@@ -122,7 +122,9 @@ class PlanejamentoJobLog(Base):
     dados = Column(JSON)  # Dados adicionais (ex: quantidade de objetivos gerados)
     
     # Timestamp
-    created_at = Column(DateTime, default=datetime.utcnow)
+    # FIX: usa helper _utcnow (timezone-aware), alinhando com o resto do
+    # modelo. Antes: default=datetime.utcnow (naive e deprecated no 3.12+).
+    created_at = Column(DateTime, default=_utcnow)
     
     # Relacionamento
     job = relationship("PlanejamentoJob", backref="logs")

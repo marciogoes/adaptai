@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 import json
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.database import get_db
 from app.api.dependencies import (
@@ -210,7 +210,26 @@ async def obter_pei_completo(
     
     # Organizar objetivos por trimestre
     objetivos_por_trimestre = {1: [], 2: [], 3: [], 4: []}
-    
+
+    # FIX: colunas JSON do SQLAlchemy/pymysql ja retornam list/dict
+    # desserializados. json.loads(list) levantava TypeError sempre que o
+    # objetivo tinha adaptacoes/estrategias/etc populadas (ie, sempre que a
+    # IA gerava o objetivo - que e o caso normal). Agora tratamos
+    # defensivamente: se vier como str (legacy double-encoded), parsear;
+    # senao usar o valor direto.
+    def _coerce_list(val):
+        if val is None:
+            return []
+        if isinstance(val, list):
+            return val
+        if isinstance(val, str):
+            try:
+                parsed = json.loads(val)
+                return parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, TypeError):
+                return []
+        return []
+
     for obj in pei.objetivos:
         trimestre = obj.trimestre or 1
         objetivos_por_trimestre[trimestre].append({
@@ -223,10 +242,10 @@ async def obter_pei_completo(
             "valor_alvo": obj.valor_alvo,
             "valor_atual": obj.valor_atual,
             "status": obj.status,
-            "adaptacoes": json.loads(obj.adaptacoes) if obj.adaptacoes else [],
-            "estrategias": json.loads(obj.estrategias) if obj.estrategias else [],
-            "materiais_recursos": json.loads(obj.materiais_recursos) if obj.materiais_recursos else [],
-            "criterios_avaliacao": json.loads(obj.criterios_avaliacao) if obj.criterios_avaliacao else [],
+            "adaptacoes": _coerce_list(obj.adaptacoes),
+            "estrategias": _coerce_list(obj.estrategias),
+            "materiais_recursos": _coerce_list(obj.materiais_recursos),
+            "criterios_avaliacao": _coerce_list(obj.criterios_avaliacao),
             "prazo": obj.prazo.isoformat() if obj.prazo else None
         })
     
@@ -862,11 +881,18 @@ async def adicionar_objetivo(
         if curriculo:
             curriculo_id = curriculo.id
     
+    # FIX: remover chaves reservadas antes de unpack para evitar TypeError
+    # de argumento duplicado se algum dia o schema PEIObjetivoCreate crescer
+    # com esses campos (ex: suporte a copy-paste de objetivo entre PEIs).
+    dados_obj = objetivo.model_dump()
+    for chave_reservada in ("pei_id", "curriculo_nacional_id", "origem"):
+        dados_obj.pop(chave_reservada, None)
+
     novo_objetivo = PEIObjetivo(
         pei_id=pei_id,
         curriculo_nacional_id=curriculo_id,
         origem="professor_manual",
-        **objetivo.model_dump()
+        **dados_obj
     )
     
     db.add(novo_objetivo)
@@ -911,7 +937,8 @@ async def atualizar_objetivo(
     for key, value in dados.model_dump(exclude_unset=True).items():
         setattr(objetivo, key, value)
     
-    objetivo.ultima_atualizacao = datetime.utcnow()
+    # FIX: datetime.utcnow() e naive e deprecated no Python 3.12+. Usar aware.
+    objetivo.ultima_atualizacao = datetime.now(timezone.utc)
     
     # Se mudou de ia_sugestao para editado pelo professor
     if objetivo.origem == "ia_sugestao":
@@ -991,7 +1018,8 @@ async def registrar_progresso(
     
     # Atualizar valor atual do objetivo
     objetivo.valor_atual = dados.progress_value
-    objetivo.ultima_atualizacao = datetime.utcnow()
+    # FIX: datetime.utcnow() e naive e deprecated no Python 3.12+. Usar aware.
+    objetivo.ultima_atualizacao = datetime.now(timezone.utc)
     
     # Atualizar status baseado no progresso
     if dados.progress_value >= objetivo.valor_alvo:

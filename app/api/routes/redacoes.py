@@ -224,7 +224,7 @@ def listar_temas(
     
     page = build_page(items=items, total=total, pagination=pagination)
     page["total"] = total
-    page["temas"] = items
+    page["items"] = items
     return page
 
 
